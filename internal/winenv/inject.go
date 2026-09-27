@@ -43,6 +43,8 @@ func InjectEnv(backupPath string, vars map[string]string) error {
 }
 
 // createBackupIfAbsent 原子创建备份（已存在则跳过）。
+// 注意：Windows 上句柄未关闭时无法删除文件（Go 打开不带 FILE_SHARE_DELETE），
+// 因此失败路径必须先 Close 再 Remove，否则清理是无效操作。
 func createBackupIfAbsent(backupPath string, vars map[string]string) error {
 	if err := os.MkdirAll(filepath.Dir(backupPath), 0o700); err != nil {
 		return err
@@ -54,22 +56,24 @@ func createBackupIfAbsent(backupPath string, vars map[string]string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	b := EnvBackup{Vars: make(map[string]BackupEntry, len(vars))}
 	for name := range vars {
 		v, ok := GetUserEnv(name)
 		b.Vars[name] = BackupEntry{Value: v, Exists: ok}
 	}
+	abandon := func(writeErr error) error {
+		_ = f.Close()
+		_ = os.Remove(backupPath) // 写失败不得留下空/半成品备份（毒丸）
+		return writeErr
+	}
 	data, err := json.MarshalIndent(&b, "", "  ")
 	if err != nil {
-		_ = os.Remove(backupPath) // 写失败不得留下空/半成品备份（毒丸）
-		return err
+		return abandon(err)
 	}
 	if _, err := f.Write(data); err != nil {
-		_ = os.Remove(backupPath)
-		return err
+		return abandon(err)
 	}
-	return nil
+	return f.Close()
 }
 
 // RestoreEnv 按备份还原变量并删除备份；无备份（未注入）时返回 false 且不做任何事。
@@ -83,8 +87,11 @@ func RestoreEnv(backupPath string) (bool, error) {
 	}
 	var b EnvBackup
 	if err := json.Unmarshal(data, &b); err != nil {
-		// 损坏的备份：改名为 .corrupt 保留现场供人工排查，避免永久毒丸状态。
-		_ = os.Rename(backupPath, backupPath+".corrupt")
+		// 损坏的备份：改名为 .corrupt 保留现场供人工排查，避免永久毒丸状态；
+		// 改名也失败（如被占用）则退回删除。
+		if rerr := os.Rename(backupPath, backupPath+".corrupt"); rerr != nil {
+			_ = os.Remove(backupPath)
+		}
 		return false, err
 	}
 	for name, e := range b.Vars {
