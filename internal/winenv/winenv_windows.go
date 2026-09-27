@@ -1,0 +1,123 @@
+//go:build windows
+
+// Package winenv 处理 Windows 集成：用户环境变量写入（含 WM_SETTINGCHANGE 广播）
+// 与 HKCU Run 开机自启。
+package winenv
+
+import (
+	"fmt"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows/registry"
+)
+
+const (
+	envKeyPath = `Environment`
+	runKeyPath = `Software\Microsoft\Windows\CurrentVersion\Run`
+	runValName = "cops"
+)
+
+// SetUserEnv 写入 HKCU 用户环境变量。
+func SetUserEnv(name, value string) error {
+	k, err := registry.OpenKey(registry.CURRENT_USER, envKeyPath, registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("打开 HKCU\\Environment 失败: %w", err)
+	}
+	defer k.Close()
+	return k.SetStringValue(name, value)
+}
+
+// DeleteUserEnv 删除用户环境变量。
+func DeleteUserEnv(name string) error {
+	k, err := registry.OpenKey(registry.CURRENT_USER, envKeyPath, registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("打开 HKCU\\Environment 失败: %w", err)
+	}
+	defer k.Close()
+	if err := k.DeleteValue(name); err != nil && err != registry.ErrNotExist {
+		return err
+	}
+	return nil
+}
+
+// GetUserEnv 读取用户环境变量。
+func GetUserEnv(name string) (string, bool) {
+	k, err := registry.OpenKey(registry.CURRENT_USER, envKeyPath, registry.QUERY_VALUE)
+	if err != nil {
+		return "", false
+	}
+	defer k.Close()
+	v, _, err := k.GetStringValue(name)
+	if err != nil {
+		return "", false
+	}
+	return v, true
+}
+
+// BroadcastSettingChange 广播环境变量变更，让资源管理器与新终端立即感知。
+// 实测部分机器上 HWND_BROADCAST 会无视 uTimeout 无限阻塞，
+// 因此放到后台线程执行并用看门狗兜底：最多等 3 秒，超时即放弃
+// （此时注销重登或重启后仍会生效）。
+func BroadcastSettingChange() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		user32 := syscall.NewLazyDLL("user32.dll")
+		proc := user32.NewProc("SendMessageTimeoutW")
+		const (
+			hwndBroadcast   = 0xFFFF
+			wmSettingChange = 0x001A
+			smtoAbortIfHung = 0x0008
+		)
+		env, err := syscall.UTF16PtrFromString("Environment")
+		if err != nil {
+			return
+		}
+		proc.Call(hwndBroadcast, wmSettingChange, 0, uintptr(unsafe.Pointer(env)), smtoAbortIfHung, 2000, 0)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		// 放弃等待广播完成
+	}
+}
+
+// SetAutostart 写入 HKCU Run 自启动项（最小化控制台方式启动 cops serve）。
+func SetAutostart(exePath string) error {
+	k, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("打开 HKCU Run 失败: %w", err)
+	}
+	defer k.Close()
+	cmd := fmt.Sprintf(`cmd /c start "" /min "%s" serve --headless`, exePath)
+	return k.SetStringValue(runValName, cmd)
+}
+
+// RemoveAutostart 删除自启动项。
+func RemoveAutostart() error {
+	k, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	if err := k.DeleteValue(runValName); err != nil && err != registry.ErrNotExist {
+		return err
+	}
+	return nil
+}
+
+// GetAutostart 读取自启动命令行（不存在返回空）。
+func GetAutostart() (string, bool) {
+	k, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.QUERY_VALUE)
+	if err != nil {
+		return "", false
+	}
+	defer k.Close()
+	v, _, err := k.GetStringValue(runValName)
+	if err != nil {
+		return "", false
+	}
+	return v, true
+}

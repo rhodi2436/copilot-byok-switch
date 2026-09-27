@@ -1,0 +1,6 @@
+cops.exe
+cops
+*.exe
+dist/
+*.test
+*.out

@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cops · Copilot 供应商切换</title>
+<style>
+  :root { --bg:#0f1117; --card:#1a1d27; --line:#2a2e3b; --tx:#e6e8ee; --dim:#8b90a0; --acc:#4f8cff; --ok:#34c77b; --warn:#e8b339; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--tx); font:14px/1.6 "Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:24px 20px 60px; }
+  h1 { font-size:20px; margin:0 0 4px; } h1 small { color:var(--dim); font-weight:normal; font-size:13px; }
+  .env { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 16px; margin:16px 0; font-size:13px; }
+  .env code { background:#232735; padding:1px 6px; border-radius:4px; color:#9ecbff; }
+  .sec { margin-top:28px; } .sec h2 { font-size:16px; margin:0 0 12px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; position:relative; }
+  .card.active { border-color:var(--ok); box-shadow:0 0 0 1px var(--ok); }
+  .card .name { font-weight:600; font-size:15px; }
+  .card .badge { position:absolute; top:12px; right:12px; font-size:12px; color:var(--ok); }
+  .card .meta { color:var(--dim); font-size:12px; margin-top:6px; word-break:break-all; }
+  .card .actions { margin-top:12px; display:flex; gap:8px; }
+  button { background:var(--acc); color:#fff; border:0; border-radius:6px; padding:6px 14px; font-size:13px; cursor:pointer; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--dim); }
+  button.danger { background:transparent; border:1px solid #5b2b33; color:#e07a88; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:500; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .dialog-bg { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; }
+  .dialog-bg.show { display:flex; }
+  .dialog { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:22px; width:min(560px,92vw); max-height:86vh; overflow:auto; }
+  .dialog h3 { margin:0 0 14px; font-size:15px; }
+  .dialog label { display:block; font-size:12px; color:var(--dim); margin:10px 0 4px; }
+  .dialog input { width:100%; background:#12141c; border:1px solid var(--line); border-radius:6px; color:var(--tx); padding:7px 10px; font-size:13px; }
+  .dialog .row { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
+  .hint { color:var(--dim); font-size:12px; }
+  .err { color:#e07a88; font-size:13px; margin-top:8px; white-space:pre-wrap; }
+  .toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  .log-err td { color:#e07a88; }
+  .empty { color:var(--dim); padding:18px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>cops <small>· Copilot CLI BYOK 供应商切换 <span id="ver"></span></small></h1>
+  <div class="env" id="envInfo">加载中…</div>
+
+  <div class="sec">
+    <div class="toolbar"><h2>供应商</h2><button onclick="ui.edit(null)">＋ 添加供应商</button></div>
+    <div class="cards" id="cards"></div>
+  </div>
+
+  <div class="sec">
+    <div class="toolbar"><h2>用量统计（近 7 天）</h2><button class="ghost" onclick="ui.refreshStats()">刷新</button></div>
+    <table id="statsTable"><thead><tr>
+      <th>供应商</th><th>模型</th><th class="num">请求</th><th class="num">失败</th>
+      <th class="num">输入 tokens</th><th class="num">输出 tokens</th><th class="num">估算费用</th>
+    </tr></thead><tbody></tbody></table>
+    <div class="empty" id="statsEmpty" style="display:none">暂无用量数据</div>
+  </div>
+
+  <div class="sec">
+    <div class="toolbar"><h2>请求日志（最近 50 条）</h2><button class="ghost" onclick="ui.refreshLogs()">刷新</button></div>
+    <table id="logsTable"><thead><tr>
+      <th>时间</th><th>供应商</th><th>模型</th><th>状态</th><th class="num">耗时</th><th class="num">tokens</th><th>错误</th>
+    </tr></thead><tbody></tbody></table>
+    <div class="empty" id="logsEmpty" style="display:none">暂无请求日志</div>
+  </div>
+</div>
+
+<div class="dialog-bg" id="dlgBg">
+  <div class="dialog">
+    <h3 id="dlgTitle">添加供应商</h3>
+    <label>名称（唯一 ID，如 glm / deepseek / openrouter）</label>
+    <input id="fName" placeholder="glm">
+    <label>Base URL（OpenAI 兼容根地址）</label>
+    <input id="fUrl" placeholder="https://open.bigmodel.cn/api/paas/v4">
+    <label>API Key（留空且为编辑时保持不变）</label>
+    <input id="fKey" type="password" placeholder="sk-...">
+    <label>默认模型（激活时改写请求中的 model）</label>
+    <input id="fModel" placeholder="glm-4.7">
+    <label>模型清单（逗号分隔，用于 /v1/models 与下拉）</label>
+    <input id="fModels" placeholder="glm-4.7,glm-4-flash">
+    <label>价格：每百万 tokens 输入/输出（可选，用于费用估算）</label>
+    <div style="display:flex;gap:10px">
+      <input id="fPriceIn" type="number" step="any" placeholder="输入单价">
+      <input id="fPriceOut" type="number" step="any" placeholder="输出单价">
+    </div>
+    <div class="err" id="dlgErr"></div>
+    <div class="row">
+      <button class="ghost" onclick="ui.closeDlg()">取消</button>
+      <button onclick="ui.saveProvider()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmtN = n => (n||0).toLocaleString('zh-CN');
+const cost = c => c ? '¥'+c.toFixed(4) : '—';
+
+const ui = {
+  providers: [], active: '',
+
+  async init() {
+    await Promise.all([this.refreshStatus(), this.refreshProviders(), this.refreshStats(), this.refreshLogs()]);
+  },
+
+  async api(path, opt) {
+    const r = await fetch('/_cops/api/'+path, opt);
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    return j;
+  },
+
+  async refreshStatus() {
+    try {
+      const s = await this.api('status');
+      $('#ver').textContent = 'v'+s.version;
+      const env = s.copilotEnv||{};
+      const ap = s.activeProvider;
+      $('#envInfo').innerHTML =
+        `当前激活：<b>${s.active? s.active : '<span style="color:var(--warn)">未设置</span>'}</b>` +
+        (ap? `（模型 ${ap.model||'—'}）` : '') +
+        ` &nbsp;·&nbsp; 监听 <code>${s.listen}</code><br>` +
+        `Copilot CLI 环境变量：<code>COPILOT_PROVIDER_TYPE=${env.COPILOT_PROVIDER_TYPE}</code> ` +
+        `<code>COPILOT_PROVIDER_BASE_URL=${env.COPILOT_PROVIDER_BASE_URL}</code> ` +
+        `<code>COPILOT_MODEL=${env.COPILOT_MODEL}</code><br>` +
+        `<span class="hint">切换供应商无需重启 Copilot CLI（base URL 不变，代理即时路由）。</span>`;
+    } catch(e) { $('#envInfo').textContent = '无法连接管理 API：'+e.message; }
+  },
+
+  async refreshProviders() {
+    const j = await this.api('providers');
+    this.providers = j.providers||[]; this.active = j.active||'';
+    const box = $('#cards'); box.innerHTML = '';
+    if (!this.providers.length) {
+      box.innerHTML = '<div class="empty">还没有供应商，点击右上角「添加供应商」。</div>'; return;
+    }
+    for (const p of this.providers) {
+      const el = document.createElement('div');
+      el.className = 'card' + (p.name===this.active ? ' active':'');
+      el.innerHTML = `
+        ${p.name===this.active?'<span class="badge">● 使用中</span>':''}
+        <div class="name">${esc(p.name)}</div>
+        <div class="meta">${esc(p.baseUrl)}<br>模型：${esc(p.model||'—')} · Key：${esc(p.apiKey||'无')}<br>
+        清单：${esc((p.models||[]).join(', ')||'—')}</div>
+        <div class="actions">
+          <button ${p.name===this.active?'disabled':''} onclick="ui.switchTo('${esc(p.name)}')">启用</button>
+          <button class="ghost" onclick="ui.edit('${esc(p.name)}')">编辑</button>
+          <button class="danger" onclick="ui.remove('${esc(p.name)}')">删除</button>
+        </div>`;
+      box.appendChild(el);
+    }
+  },
+
+  async switchTo(name) {
+    try { await this.api('switch', {method:'POST', body:JSON.stringify({name})}); await this.refreshAll(); }
+    catch(e){ alert('切换失败：'+e.message); }
+  },
+
+  async remove(name) {
+    if (!confirm(`确定删除供应商「${name}」？`)) return;
+    try { await this.api('providers?name='+encodeURIComponent(name), {method:'DELETE'}); await this.refreshAll(); }
+    catch(e){ alert('删除失败：'+e.message); }
+  },
+
+  edit(name) {
+    const p = name ? this.providers.find(x=>x.name===name) : null;
+    $('#dlgTitle').textContent = p ? '编辑供应商 · '+p.name : '添加供应商';
+    $('#fName').value = p?p.name:''; $('#fName').disabled = !!p;
+    $('#fUrl').value = p?p.baseUrl:'';
+    $('#fKey').value = '';
+    $('#fKey').placeholder = p ? '留空保持不变（当前 '+p.apiKey+'）' : 'sk-...';
+    $('#fModel').value = p?(p.model||''):'';
+    $('#fModels').value = p?(p.models||[]).join(','):'';
+    const price = p && p.prices && p.prices[p.model];
+    $('#fPriceIn').value = price?price.inputPerMillionTokens:'';
+    $('#fPriceOut').value = price?price.outputPerMillionTokens:'';
+    $('#dlgErr').textContent = '';
+    $('#dlgBg').classList.add('show');
+  },
+
+  closeDlg(){ $('#dlgBg').classList.remove('show'); },
+
+  async saveProvider() {
+    const p = {
+      name: $('#fName').value.trim(), baseUrl: $('#fUrl').value.trim(),
+      apiKey: $('#fKey').value.trim(), model: $('#fModel').value.trim(),
+      models: $('#fModels').value.split(',').map(s=>s.trim()).filter(Boolean),
+    };
+    if (!p.name || !p.baseUrl) { $('#dlgErr').textContent = '名称与 Base URL 必填'; return; }
+    const pin = parseFloat($('#fPriceIn').value), pout = parseFloat($('#fPriceOut').value);
+    if (p.model && (pin>0 || pout>0)) {
+      p.prices = {[p.model]: {inputPerMillionTokens: pin||0, outputPerMillionTokens: pout||0, currency:'CNY'}};
+    }
+    try {
+      await this.api('providers', {method:'POST', body:JSON.stringify(p)});
+      this.closeDlg(); await this.refreshAll();
+    } catch(e){ $('#dlgErr').textContent = e.message; }
+  },
+
+  async refreshStats() {
+    try {
+      const j = await this.api('stats?days=7');
+      const tb = $('#statsTable tbody'); tb.innerHTML = '';
+      const rows = j.summary||[];
+      $('#statsEmpty').style.display = rows.length?'none':'block';
+      for (const r of rows) {
+        tb.insertAdjacentHTML('beforeend',
+          `<tr><td>${esc(r.provider)}</td><td>${esc(r.model||'—')}</td>`+
+          `<td class="num">${fmtN(r.requests)}</td><td class="num">${fmtN(r.errors)}</td>`+
+          `<td class="num">${fmtN(r.inputTokens)}</td><td class="num">${fmtN(r.outputTokens)}</td>`+
+          `<td class="num">${cost(r.cost)}</td></tr>`);
+      }
+    } catch(e){ console.error(e); }
+  },
+
+  async refreshLogs() {
+    try {
+      const j = await this.api('logs?limit=50');
+      const tb = $('#logsTable tbody'); tb.innerHTML = '';
+      const es = j.entries||[];
+      $('#logsEmpty').style.display = es.length?'none':'block';
+      for (const e of es.slice().reverse()) {
+        const toks = e.promptTokens||e.completionTokens ? `${fmtN(e.promptTokens)}/${fmtN(e.completionTokens)}` : '—';
+        tb.insertAdjacentHTML('beforeend',
+          `<tr class="${e.error?'log-err':''}"><td>${esc(e.time)}</td><td>${esc(e.provider||'—')}</td>`+
+          `<td>${esc(e.model||'—')}</td><td>${e.status||'—'}</td><td class="num">${fmtN(e.durationMs)}ms</td>`+
+          `<td class="num">${toks}</td><td title="${esc(e.error||'')}">${esc((e.error||'').slice(0,60))}</td></tr>`);
+      }
+    } catch(e){ console.error(e); }
+  },
+
+  async refreshAll(){ await Promise.all([this.refreshStatus(), this.refreshProviders(), this.refreshStats(), this.refreshLogs()]); }
+};
+
+function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+$('#dlgBg').addEventListener('click', e => { if (e.target.id==='dlgBg') ui.closeDlg(); });
+ui.init();
+</script>
+</body>
+</html>
