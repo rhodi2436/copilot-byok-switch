@@ -22,13 +22,29 @@ const (
 	dummyAPIKey        = "cops-local"
 )
 
+// copilotEnvVars 构建指向本地代理的 COPILOT_* 环境变量集。
+func copilotEnvVars(cfg *config.Config) map[string]string {
+	return map[string]string{
+		envProviderType:    "openai",
+		envProviderBaseURL: cfg.PublicURL(),
+		envProviderAPIKey:  dummyAPIKey,
+		envModel:           cfg.VirtualModel,
+	}
+}
+
+// copilotEnvNames COPILOT_* 变量名列表。
+func copilotEnvNames() []string {
+	return []string{envProviderType, envProviderBaseURL, envProviderAPIKey, envModel}
+}
+
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "一键安装：写入 COPILOT_* 用户环境变量 + 设置开机自启",
+	Short: "一键安装：注入 COPILOT_* 环境变量（带备份）+ 设置托盘开机自启",
 	Long: `将 Copilot CLI 指向本地 cops 代理：
-  1. 写入用户环境变量 COPILOT_PROVIDER_TYPE / BASE_URL / API_KEY / MODEL
+  1. 注入用户环境变量 COPILOT_PROVIDER_TYPE / BASE_URL / API_KEY / MODEL
+     （自动备份原值到 ~/.cops/env-backup.json，cops tray 退出或 uninstall 时恢复）
   2. 广播 WM_SETTINGCHANGE（新开终端即可生效，已开终端需重开）
-  3. 写入 HKCU Run 开机自启动 cops serve --headless
+  3. 写入 HKCU Run 开机自启动 cops tray（托盘常驻 + 启动即注入 + 退出即恢复）
 
 完成后请打开新的终端运行 copilot。`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -36,8 +52,6 @@ var installCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		// 保留已有配置，仅在无供应商时给出提示。
-		baseURL := cfg.PublicURL()
 		model, _ := cmd.Flags().GetString("model")
 		if model != "" {
 			cfg.VirtualModel = model
@@ -46,62 +60,98 @@ var installCmd = &cobra.Command{
 			}
 		}
 
-		vars := map[string]string{
-			envProviderType:    "openai",
-			envProviderBaseURL: baseURL,
-			envProviderAPIKey:  dummyAPIKey,
-			envModel:           cfg.VirtualModel,
+		vars := copilotEnvVars(cfg)
+		if err := winenv.InjectEnv(config.EnvBackupPath(), vars); err != nil {
+			return fmt.Errorf("注入环境变量失败: %w", err)
 		}
-		for k, v := range vars {
-			if err := winenv.SetUserEnv(k, v); err != nil {
-				return fmt.Errorf("写入环境变量 %s 失败: %w", k, err)
-			}
-		}
-		winenv.BroadcastSettingChange()
 
 		exe, err := os.Executable()
 		if err == nil {
 			exe, _ = filepath.Abs(exe)
-			if err := winenv.SetAutostart(exe); err != nil {
+			if err := winenv.SetAutostart(exe, "tray --autostart"); err != nil {
 				fmt.Println("⚠ 设置开机自启失败:", err)
 			}
 		}
 
 		fmt.Println("✅ 安装完成！")
 		fmt.Println()
-		fmt.Println("已写入用户环境变量：")
+		fmt.Println("已注入用户环境变量（原值已备份，可随时恢复）：")
 		for k, v := range vars {
 			fmt.Printf("  %s=%s\n", k, v)
 		}
 		fmt.Println()
 		fmt.Println("下一步：")
-		fmt.Println("  1. 打开一个新的终端（必须新开，已开的终端读不到新环境变量）")
+		fmt.Println("  1. 运行 cops tray 启动托盘（本机即刻生效；开机自启已设置）")
+		fmt.Println("  2. 打开一个新的终端（必须新开，已开的终端读不到新环境变量）")
 		if cfg.ActiveProvider() == nil {
-			fmt.Println("  2. cops add 添加供应商并填入真实 API Key（或访问 Web 管理页配置）")
-			fmt.Println("  3. cops switch <名称> 激活")
+			fmt.Println("  3. cops add 添加供应商并填入真实 API Key（或托盘菜单打开管理页）")
 		} else {
-			fmt.Printf("  2. 直接运行 copilot（当前供应商: %s）\n", cfg.Active)
+			fmt.Printf("  3. 直接运行 copilot（当前供应商: %s）\n", cfg.Active)
 		}
-		fmt.Println("  管理页: cops open")
+		fmt.Println("  停止: 托盘菜单「退出」或 cops uninstall —— 均自动恢复环境变量")
 		return nil
 	},
 }
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "卸载：清理 COPILOT_* 环境变量与开机自启（保留 ~/.cops 配置与数据）",
+	Short: "卸载：恢复 COPILOT_* 环境变量、清理开机自启（保留 ~/.cops 配置与数据）",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		for _, name := range []string{envProviderType, envProviderBaseURL, envProviderAPIKey, envModel} {
-			if err := winenv.DeleteUserEnv(name); err != nil {
-				fmt.Printf("⚠ 删除 %s 失败: %v\n", name, err)
-			}
+		restored, err := winenv.RestoreEnv(config.EnvBackupPath())
+		if err != nil {
+			fmt.Println("⚠ 恢复备份失败:", err)
 		}
-		winenv.BroadcastSettingChange()
+		if !restored {
+			// 无备份（如 v0.1 直接写入未备份）：退回删除语义
+			for _, name := range copilotEnvNames() {
+				if err := winenv.DeleteUserEnv(name); err != nil {
+					fmt.Printf("⚠ 删除 %s 失败: %v\n", name, err)
+				}
+			}
+			winenv.BroadcastSettingChange()
+		}
 		if err := winenv.RemoveAutostart(); err != nil {
 			fmt.Println("⚠ 移除自启动失败:", err)
 		}
-		fmt.Println("✅ 已清理环境变量与自启动。配置与用量数据保留在 ~/.cops/（可手动删除）。")
+		fmt.Println("✅ 已恢复环境变量并清理自启动。配置与用量数据保留在 ~/.cops/（可手动删除）。")
 		fmt.Println("   新开终端后 copilot 将恢复使用 GitHub Copilot 官方认证。")
+		return nil
+	},
+}
+
+var injectCmd = &cobra.Command{
+	Use:   "inject",
+	Short: "手动注入 COPILOT_* 环境变量（托盘启动时也会自动执行）",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if winenv.IsInjected(config.EnvBackupPath()) {
+			fmt.Println("已处于注入状态（备份存在）；如需刷新值请先 cops restore。")
+			return nil
+		}
+		if err := winenv.InjectEnv(config.EnvBackupPath(), copilotEnvVars(cfg)); err != nil {
+			return err
+		}
+		fmt.Println("✅ 已注入 COPILOT_* 环境变量（原值已备份）。新开终端后生效。")
+		return nil
+	},
+}
+
+var restoreCmd = &cobra.Command{
+	Use:   "restore",
+	Short: "恢复注入前的 COPILOT_* 环境变量（托盘退出时也会自动执行）",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		restored, err := winenv.RestoreEnv(config.EnvBackupPath())
+		if err != nil {
+			return err
+		}
+		if !restored {
+			fmt.Println("当前未处于注入状态（无备份），无需恢复。")
+			return nil
+		}
+		fmt.Println("✅ 已恢复注入前的环境变量。新开终端后 copilot 走官方认证。")
 		return nil
 	},
 }
@@ -149,7 +199,22 @@ var doctorCmd = &cobra.Command{
 			}
 		}
 
-		for _, name := range []string{envProviderType, envProviderBaseURL, envProviderAPIKey, envModel} {
+		injected := winenv.IsInjected(config.EnvBackupPath())
+		if injected {
+			if b, err := winenv.ReadBackup(config.EnvBackupPath()); err == nil {
+				n := 0
+				for _, e := range b.Vars {
+					if e.Exists {
+						n++
+					}
+				}
+				check(true, fmt.Sprintf("注入状态: 已注入（备份原值 %d 项，cops tray 退出时自动恢复）", n), "")
+			}
+		} else {
+			check(true, "注入状态: 未注入（cops tray 启动时会自动注入）", "")
+		}
+
+		for _, name := range copilotEnvNames() {
 			v, exists := winenv.GetUserEnv(name)
 			expected := ""
 			if err == nil {
@@ -164,13 +229,18 @@ var doctorCmd = &cobra.Command{
 					expected = cfg.VirtualModel
 				}
 			}
-			check(exists && (expected == "" || v == expected),
+			// 已注入时必须匹配期望值；未注入时（已恢复）缺省视为正常。
+			pass := exists && (expected == "" || v == expected)
+			if !injected && !exists {
+				pass = true
+			}
+			check(pass,
 				fmt.Sprintf("环境变量 %s=%s", name, v),
-				"运行 cops install 重新写入；新开终端后生效")
+				"运行 cops inject 或 cops tray 注入；新开终端后生效")
 		}
 
 		autoCmd, has := winenv.GetAutostart()
-		check(has, "开机自启动已设置", "运行 cops install")
+		check(has, "开机自启动已设置（cops tray）", "运行 cops install")
 		if has {
 			fmt.Printf("   %s\n", autoCmd)
 		}
@@ -185,5 +255,5 @@ var doctorCmd = &cobra.Command{
 
 func init() {
 	installCmd.Flags().String("model", "", "写入 COPILOT_MODEL 的虚拟模型名（默认 cops-active）")
-	rootCmd.AddCommand(installCmd, uninstallCmd, doctorCmd)
+	rootCmd.AddCommand(installCmd, uninstallCmd, injectCmd, restoreCmd, doctorCmd)
 }

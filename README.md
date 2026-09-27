@@ -3,6 +3,7 @@
 `cops`（**C**opilot **P**rovider **S**witch）是一个本地 OpenAI 兼容反向代理，
 专为 [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/use-copilot-agents/use-copilot-cli) 的
 BYOK（Bring Your Own Key）机制设计，实现类似 CCSwitch 的**模型供应商一键切换**体验。
+支持**系统托盘常驻**：启动自动注入环境变量，退出自动恢复。
 
 ## 为什么用代理而不是改配置？
 
@@ -39,29 +40,50 @@ cops add glm --url https://open.bigmodel.cn/api/paas/v4 --key <你的Key> --mode
 cops add deepseek --url https://api.deepseek.com/v1 --key <你的Key> --model deepseek-chat
 cops add ollama --url http://localhost:11434/v1 --model qwen3:32b
 
-# 2. 一键安装：写入 COPILOT_* 用户环境变量 + 开机自启
+# 2. 一键安装：注入 COPILOT_* 用户环境变量（带备份）+ 托盘开机自启
 cops install
 
-# 3. 打开新的终端（必须新开！），运行 copilot 即走 glm
-# 4. 随时切换 —— 不用重启 copilot
+# 3. 启动托盘（本机即刻生效；开机自启已设置）
+cops tray
+
+# 4. 打开新的终端（必须新开！），运行 copilot 即走 glm
+# 5. 随时切换 —— 托盘菜单点一下，或命令行，均无需重启 copilot
 cops switch deepseek
 cops switch glm --model glm-4-flash
 
 # 诊断 / 管理
-cops doctor        # 体检：配置、守护进程、环境变量、自启、上游连通
+cops doctor        # 体检：配置、守护进程、注入状态、自启、上游连通
 cops open          # 浏览器打开 Web 管理页
 cops stats         # 用量与费用
 cops logs -f       # 跟随请求日志
-cops uninstall     # 清理环境变量与自启（恢复官方认证；配置保留）
+cops uninstall     # 恢复环境变量 + 清理自启（配置保留）
 ```
+
+## 托盘模式（推荐常驻方式）
+
+`cops tray` = 托盘 UI + 代理守护进程，单进程：
+
+- **启动即注入**：自动写入 4 个 `COPILOT_*` 用户环境变量指向本地代理；
+  注入前原值备份到 `~/.cops/env-backup.json`（二次启动不覆盖最早备份）
+- **退出即恢复**：托盘菜单「退出（恢复环境变量并停止代理）」—— 原值还原、代理关停，"停止即还原"
+- **托盘菜单**：供应商列表一键切换（勾选=当前）、打开管理页、停用/启用注入
+- **附着模式**：若检测到已有守护进程（如 `cops serve`）在运行，托盘仅作 UI；
+  退出时通过管理 API 停掉该守护进程，语义不变
+- **崩溃自愈**：托盘被强杀后注入状态保留（备份文件在），`cops restore` 或下次启动可正确恢复
+- 菜单每 2 秒轮询刷新，Web 管理页 / `cops switch` 的变更会自动同步到菜单
+- `--console` 参数保留控制台便于调试；开机自启以最小化方式启动
+
+注意：环境变量注入/恢复**只影响新开的终端**；已运行的 copilot 会话在托盘退出后会断流（代理已停），重开终端即走官方认证。
 
 ## 命令一览
 
 | 命令 | 说明 |
 |---|---|
-| `cops serve [--headless]` | 前台启动代理守护进程（自启动项即此命令） |
-| `cops install [--model X]` | 写入 4 个 `COPILOT_*` 用户环境变量 + HKCU Run 自启 |
-| `cops uninstall` | 清理环境变量与自启（保留 `~/.cops/` 数据） |
+| `cops tray [--console]` | 托盘常驻（推荐）：启动注入 / 退出恢复 / 菜单切换 |
+| `cops serve [--headless]` | 前台守护进程（无托盘） |
+| `cops install [--model X]` | 注入 4 个 `COPILOT_*`（带备份）+ HKCU Run 自启（cops tray） |
+| `cops uninstall` | 恢复环境变量 + 清自启（保留 `~/.cops/` 数据） |
+| `cops inject` / `cops restore` | 手动注入 / 恢复环境变量（托盘崩溃后兜底） |
 | `cops add [名称] --url --key --model [--models] [--price-in --price-out]` | 添加供应商 |
 | `cops list` / `cops current` | 列出供应商 / 查看当前激活 |
 | `cops switch <名称> [--model X]` | 一键切换（守护进程运行中时即时生效） |
@@ -70,7 +92,7 @@ cops uninstall     # 清理环境变量与自启（恢复官方认证；配置�
 | `cops stats [--days N]` | 用量费用统计 |
 | `cops logs [-f] [--limit N]` | 请求日志 |
 | `cops open` | 打开 Web 管理页 |
-| `cops doctor` | 全面体检 |
+| `cops doctor` | 全面体检（含注入状态） |
 
 ## 工作原理
 
@@ -140,7 +162,7 @@ cops uninstall     # 清理环境变量与自启（恢复官方认证；配置�
 代理仅监听 `127.0.0.1`，管理页无鉴权（本机场景）。API Key 明文存于 `~/.cops/config.json`，请勿把该目录加入同步/备份到不受信位置。若改 `listen` 为 `0.0.0.0` 需自行承担风险。
 
 **Q: 如何恢复官方 Copilot？**
-`cops uninstall`，然后新开终端即可。
+托盘菜单「退出」（自动恢复环境变量并停止代理），或 `cops uninstall`，然后新开终端即可。
 
 ## 开发
 
@@ -154,9 +176,10 @@ go run . serve      # 源码直接运行
 
 - `devtools/mockupstream`：模拟 OpenAI 兼容上游，用于手工冒烟测试
   （`go run ./devtools/mockupstream 9911 mock-a`）
-- 目录结构：`internal/proxy`（核心反代）、`internal/admin`（管理 API+Web）、
+- `devtools/icongen`：重新生成托盘图标（`go run ./devtools/icongen` → `internal/tray/icon.ico`）
+- 目录结构：`internal/proxy`（核心反代）、`internal/tray`（托盘 UI）、`internal/admin`（管理 API+Web）、
   `internal/config`（配置）、`internal/stats`（用量）、`internal/reqlog`（日志）、
-  `internal/cli`（命令）、`internal/winenv`（Windows 集成）
+  `internal/cli`（命令）、`internal/winenv`（Windows 集成：环境变量注入/恢复、注册表）
 
 ## 许可
 

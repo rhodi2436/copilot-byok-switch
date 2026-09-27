@@ -148,20 +148,32 @@ var openCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		host, port, _ := net.SplitHostPort(cfg.Listen)
-		if host == "" || host == "0.0.0.0" || host == "::" {
-			host = "127.0.0.1"
-		}
-		url := fmt.Sprintf("http://%s:%s/_cops/", host, port)
-		switch runtime.GOOS {
-		case "windows":
-			return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-		case "darwin":
-			return exec.Command("open", url).Start()
-		default:
-			return exec.Command("xdg-open", url).Start()
-		}
+		return openBrowser(baseURLOf(cfg) + "/_cops/")
 	},
+}
+
+// baseURLOf 守护进程对外的访问根地址（通配地址映射为 127.0.0.1）。
+func baseURLOf(cfg *config.Config) string {
+	host, port, err := net.SplitHostPort(cfg.Listen)
+	if err != nil {
+		return "http://" + cfg.Listen
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "http://" + host + ":" + port
+}
+
+// openBrowser 用系统默认浏览器打开 URL。
+func openBrowser(url string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		return exec.Command("open", url).Start()
+	default:
+		return exec.Command("xdg-open", url).Start()
+	}
 }
 
 func init() {

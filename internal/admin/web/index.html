@@ -121,14 +121,16 @@ const ui = {
       $('#ver').textContent = 'v'+s.version;
       const env = s.copilotEnv||{};
       const ap = s.activeProvider;
+      const inj = s.injected ? '<b style="color:var(--ok)">已注入</b>' : '<span style="color:var(--warn)">未注入</span>';
+      const auto = s.autostart ? '自启 ✅' : '自启 ❌';
       $('#envInfo').innerHTML =
         `当前激活：<b>${s.active? s.active : '<span style="color:var(--warn)">未设置</span>'}</b>` +
         (ap? `（模型 ${ap.model||'—'}）` : '') +
-        ` &nbsp;·&nbsp; 监听 <code>${s.listen}</code><br>` +
+        ` &nbsp;·&nbsp; 监听 <code>${s.listen}</code> &nbsp;·&nbsp; 环境变量注入：${inj} &nbsp;·&nbsp; ${auto}<br>` +
         `Copilot CLI 环境变量：<code>COPILOT_PROVIDER_TYPE=${env.COPILOT_PROVIDER_TYPE}</code> ` +
         `<code>COPILOT_PROVIDER_BASE_URL=${env.COPILOT_PROVIDER_BASE_URL}</code> ` +
         `<code>COPILOT_MODEL=${env.COPILOT_MODEL}</code><br>` +
-        `<span class="hint">切换供应商无需重启 Copilot CLI（base URL 不变，代理即时路由）。</span>`;
+        `<span class="hint">切换供应商无需重启 Copilot CLI（base URL 不变，代理即时路由）。注入/恢复只影响新开终端。</span>`;
     } catch(e) { $('#envInfo').textContent = '无法连接管理 API：'+e.message; }
   },
 

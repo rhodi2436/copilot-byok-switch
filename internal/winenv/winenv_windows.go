@@ -84,15 +84,22 @@ func BroadcastSettingChange() {
 	}
 }
 
-// SetAutostart 写入 HKCU Run 自启动项（最小化控制台方式启动 cops serve）。
-func SetAutostart(exePath string) error {
+// SetAutostart 写入 HKCU Run 自启动项（最小化控制台方式启动指定子命令，
+// 如 "tray --autostart"）。
+func SetAutostart(exePath, args string) error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.SET_VALUE)
 	if err != nil {
 		return fmt.Errorf("打开 HKCU Run 失败: %w", err)
 	}
 	defer k.Close()
-	cmd := fmt.Sprintf(`cmd /c start "" /min "%s" serve --headless`, exePath)
+	cmd := fmt.Sprintf(`cmd /c start "" /min "%s" %s`, exePath, args)
 	return k.SetStringValue(runValName, cmd)
+}
+
+// FreeConsole 分离控制台窗口（托盘模式隐藏黑窗用）。
+func FreeConsole() {
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	kernel32.NewProc("FreeConsole").Call()
 }
 
 // RemoveAutostart 删除自启动项。

@@ -12,10 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"cops/internal/config"
 	"cops/internal/reqlog"
 	"cops/internal/stats"
+	"cops/internal/winenv"
 )
 
 //go:embed all:web
@@ -29,6 +31,8 @@ type Server struct {
 	cfgPtr *atomic.Pointer[config.Config]
 	stats  *stats.Tracker
 	log    *reqlog.Logger
+	// OnShutdown 由调用方注入：收到 shutdown 请求时优雅关停守护进程。
+	OnShutdown func()
 }
 
 // New 创建管理服务。
@@ -43,6 +47,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/_cops/api/switch", s.handleSwitch)
 	mux.HandleFunc("/_cops/api/stats", s.handleStats)
 	mux.HandleFunc("/_cops/api/logs", s.handleLogs)
+	mux.HandleFunc("/_cops/api/shutdown", s.handleShutdown)
 	mux.HandleFunc("/_cops/", s.handleUI)
 	mux.HandleFunc("/_cops", s.handleUI)
 }
@@ -87,6 +92,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"name": p.Name, "baseUrl": p.BaseURL, "model": p.Model, "models": p.Models,
 		}
 	}
+	_, autostart := winenv.GetAutostart()
+	resp["injected"] = winenv.IsInjected(config.EnvBackupPath())
+	resp["autostart"] = autostart
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -157,6 +165,24 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Switch 切换激活供应商（提取为方法，供 HTTP handler 与托盘同进程直调）。
+func (s *Server) Switch(name, model string) (*config.Provider, error) {
+	cfg := s.cfgPtr.Load()
+	p, _ := cfg.Find(name)
+	if p == nil {
+		return nil, fmt.Errorf("供应商不存在: %s", name)
+	}
+	if model != "" {
+		p.Model = model
+	}
+	cfg.Active = name
+	if err := cfg.Save(); err != nil {
+		return nil, err
+	}
+	s.cfgPtr.Store(cfg)
+	return p, nil
+}
+
 func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -171,22 +197,27 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "JSON 解析失败"})
 		return
 	}
-	cfg := s.cfgPtr.Load()
-	p, _ := cfg.Find(req.Name)
-	if p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("供应商不存在: %s", req.Name)})
+	p, err := s.Switch(req.Name, req.Model)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
-	if req.Model != "" {
-		p.Model = req.Model
-	}
-	cfg.Active = req.Name
-	if err := cfg.Save(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "active": p.Name, "model": p.Model})
+}
+
+// handleShutdown 优雅关停守护进程（托盘附着模式退出时调用）。
+func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	s.cfgPtr.Store(cfg)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "active": cfg.Active, "model": p.Model})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	if s.OnShutdown != nil {
+		go func() {
+			time.Sleep(300 * time.Millisecond) // 留时间让响应送达
+			s.OnShutdown()
+		}()
+	}
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {

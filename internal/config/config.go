@@ -76,6 +76,9 @@ func Path() string { return filepath.Join(Dir(), "config.json") }
 // StatsPath 用量统计文件路径。
 func StatsPath() string { return filepath.Join(Dir(), "stats.json") }
 
+// EnvBackupPath 环境变量注入备份文件路径（存在即"已注入"）。
+func EnvBackupPath() string { return filepath.Join(Dir(), "env-backup.json") }
+
 // LogsDir 请求日志目录。
 func LogsDir() string { return filepath.Join(Dir(), "logs") }
 

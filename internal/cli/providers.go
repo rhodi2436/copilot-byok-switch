@@ -16,21 +16,20 @@ import (
 	"cops/internal/config"
 )
 
-// daemonAPI 探测守护进程是否在运行。
+// daemonAPI 探测守护进程是否在运行（返回其基地址）。
 func daemonAPI() (string, bool) {
 	cfg, err := config.Load()
 	if err != nil {
 		return "", false
 	}
-	url := "http://" + cfg.Listen + "/_cops/api/status"
 	client := &http.Client{Timeout: 1500 * time.Millisecond}
-	resp, err := client.Get(url)
+	resp, err := client.Get(baseURLOf(cfg) + "/_cops/api/status")
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return "", false
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	return "http://" + cfg.Listen, true
+	return baseURLOf(cfg), true
 }
 
 // prompt 若值非空直接返回，否则在终端上提示输入。

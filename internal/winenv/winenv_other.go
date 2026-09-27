@@ -11,6 +11,9 @@ func SetUserEnv(name, value string) error   { return ErrUnsupported }
 func DeleteUserEnv(name string) error       { return ErrUnsupported }
 func GetUserEnv(name string) (string, bool) { return "", false }
 func BroadcastSettingChange()               {}
-func SetAutostart(exePath string) error     { return ErrUnsupported }
-func RemoveAutostart() error                { return ErrUnsupported }
-func GetAutostart() (string, bool)          { return "", false }
+func SetAutostart(exePath, args string) error {
+	return ErrUnsupported
+}
+func RemoveAutostart() error       { return ErrUnsupported }
+func GetAutostart() (string, bool) { return "", false }
+func FreeConsole()                 {}
