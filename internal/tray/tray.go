@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/systray"
@@ -77,6 +78,9 @@ type app struct {
 	act    Actions
 	cancel context.CancelFunc
 	sig    string
+	// rebuildMu 序列化 rebuild（poll 协程与点击协程可能并发触发），
+	// 防止 a.cancel/a.sig 竞态与 systray 并发 ResetMenu 导致的映射竞态崩溃。
+	rebuildMu sync.Mutex
 }
 
 // Run 启动托盘（阻塞直至 systray.Quit；Windows 上在主 goroutine 调用）。
@@ -117,6 +121,8 @@ func (a *app) poll() {
 }
 
 func (a *app) rebuild() {
+	a.rebuildMu.Lock()
+	defer a.rebuildMu.Unlock()
 	if a.cancel != nil {
 		a.cancel()
 	}
@@ -174,20 +180,32 @@ func (a *app) rebuild() {
 
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("退出（恢复环境变量并停止代理）", "")
-	a.watch(ctx, mQuit, a.act.Quit)
+	a.watch(ctx, mQuit, func() {
+		a.act.Quit()
+		// Quit 编排（恢复+停代理）完成后必须结束托盘消息循环，
+		// 否则 systray.Run 永久阻塞、进程残留。
+		systray.Quit()
+	})
 }
 
-// watch 监听菜单项点击；ctx 取消（菜单重建）时停止。
+// watch 循环监听菜单项点击（同一菜单项可多次触发）；ctx 取消（菜单重建）时停止。
 func (a *app) watch(ctx context.Context, item *systray.MenuItem, fn func()) {
 	go func() {
-		select {
-		case <-item.ClickedCh:
+		for {
 			select {
+			case _, ok := <-item.ClickedCh:
+				if !ok {
+					return // 菜单项被移除（ResetMenu）
+				}
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					fn()
+				}
 			case <-ctx.Done():
-			default:
-				fn()
+				return
 			}
-		case <-ctx.Done():
 		}
 	}()
 }

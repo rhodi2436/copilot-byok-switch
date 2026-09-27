@@ -27,16 +27,11 @@ func IsInjected(backupPath string) bool {
 
 // InjectEnv 写入 vars 前先备份原值（幂等：已有备份则保留最早的原值，
 // 防止二次启动覆盖原始状态），然后写入并广播。
+// 备份以 O_CREATE|O_EXCL 原子创建：并发调用（如托盘开关与 CLI 同时执行）时
+// 只有一个赢家，其余视为"已有备份"，避免互相覆盖原值。
 func InjectEnv(backupPath string, vars map[string]string) error {
-	if !IsInjected(backupPath) {
-		b := EnvBackup{Vars: make(map[string]BackupEntry, len(vars))}
-		for name := range vars {
-			v, ok := GetUserEnv(name)
-			b.Vars[name] = BackupEntry{Value: v, Exists: ok}
-		}
-		if err := writeBackup(backupPath, &b); err != nil {
-			return err
-		}
+	if err := createBackupIfAbsent(backupPath, vars); err != nil {
+		return err
 	}
 	for k, v := range vars {
 		if err := SetUserEnv(k, v); err != nil {
@@ -45,6 +40,32 @@ func InjectEnv(backupPath string, vars map[string]string) error {
 	}
 	BroadcastSettingChange()
 	return nil
+}
+
+// createBackupIfAbsent 原子创建备份（已存在则跳过）。
+func createBackupIfAbsent(backupPath string, vars map[string]string) error {
+	if err := os.MkdirAll(filepath.Dir(backupPath), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(backupPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if os.IsExist(err) {
+		return nil // 已有备份，保留最早原值
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	b := EnvBackup{Vars: make(map[string]BackupEntry, len(vars))}
+	for name := range vars {
+		v, ok := GetUserEnv(name)
+		b.Vars[name] = BackupEntry{Value: v, Exists: ok}
+	}
+	data, err := json.MarshalIndent(&b, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	return err
 }
 
 // RestoreEnv 按备份还原变量并删除备份；无备份（未注入）时返回 false 且不做任何事。
@@ -87,19 +108,4 @@ func ReadBackup(backupPath string) (*EnvBackup, error) {
 		return nil, err
 	}
 	return &b, nil
-}
-
-func writeBackup(backupPath string, b *EnvBackup) error {
-	if err := os.MkdirAll(filepath.Dir(backupPath), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := backupPath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, backupPath)
 }

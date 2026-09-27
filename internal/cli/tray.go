@@ -178,5 +178,7 @@ func trayState(d *daemon, baseURL string) tray.State {
 
 func init() {
 	trayCmd.Flags().BoolVar(&trayKeepConsole, "console", false, "保留控制台窗口（调试用）")
+	// 占位 flag：开机自启命令固定携带 --autostart 便于辨识，行为与默认一致。
+	trayCmd.Flags().Bool("autostart", false, "由开机自启动项调用（行为与默认一致）")
 	rootCmd.AddCommand(trayCmd)
 }
