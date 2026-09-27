@@ -62,10 +62,14 @@ func createBackupIfAbsent(backupPath string, vars map[string]string) error {
 	}
 	data, err := json.MarshalIndent(&b, "", "  ")
 	if err != nil {
+		_ = os.Remove(backupPath) // 写失败不得留下空/半成品备份（毒丸）
 		return err
 	}
-	_, err = f.Write(data)
-	return err
+	if _, err := f.Write(data); err != nil {
+		_ = os.Remove(backupPath)
+		return err
+	}
+	return nil
 }
 
 // RestoreEnv 按备份还原变量并删除备份；无备份（未注入）时返回 false 且不做任何事。
@@ -79,6 +83,8 @@ func RestoreEnv(backupPath string) (bool, error) {
 	}
 	var b EnvBackup
 	if err := json.Unmarshal(data, &b); err != nil {
+		// 损坏的备份：改名为 .corrupt 保留现场供人工排查，避免永久毒丸状态。
+		_ = os.Rename(backupPath, backupPath+".corrupt")
 		return false, err
 	}
 	for name, e := range b.Vars {

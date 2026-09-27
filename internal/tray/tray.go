@@ -111,7 +111,10 @@ func (a *app) poll() {
 				}
 			}()
 			st := a.state()
-			if st.Signature() != a.sig {
+			a.rebuildMu.Lock()
+			sig := a.sig
+			a.rebuildMu.Unlock()
+			if st.Signature() != sig {
 				a.rebuild()
 			} else {
 				systray.SetTooltip(st.Tooltip())
