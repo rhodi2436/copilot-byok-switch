@@ -88,6 +88,28 @@ func TestInjectRestoreRoundtrip(t *testing.T) {
 	_ = DeleteUserEnv(nameB)
 }
 
+// 回归测试：备份目录不存在时（全新环境首次 cops tray）应自动创建。
+func TestInjectCreatesBackupDir(t *testing.T) {
+	if err := SetUserEnv("COPS_TEST_PROBE", "capability"); err != nil {
+		t.Skipf("平台不支持注册表操作: %v", err)
+	}
+	_ = DeleteUserEnv("COPS_TEST_PROBE")
+
+	root := t.TempDir()
+	backup := filepath.Join(root, "nested", "home", ".cops", "env-backup.json")
+	if err := InjectEnv(backup, map[string]string{"COPS_TEST_DIR": "v"}); err != nil {
+		t.Fatalf("全新目录注入失败: %v", err)
+	}
+	if !IsInjected(backup) {
+		t.Fatal("备份文件未创建")
+	}
+	restored, err := RestoreEnv(backup)
+	if err != nil || !restored {
+		t.Fatalf("RestoreEnv = %v, %v", restored, err)
+	}
+	_ = DeleteUserEnv("COPS_TEST_DIR")
+}
+
 func RemoveFile(path string) error {
 	return removeFile(path)
 }

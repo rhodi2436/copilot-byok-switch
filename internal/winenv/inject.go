@@ -5,6 +5,7 @@ package winenv
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 )
 
 // BackupEntry 单个变量的注入前状态。
@@ -89,6 +90,9 @@ func ReadBackup(backupPath string) (*EnvBackup, error) {
 }
 
 func writeBackup(backupPath string, b *EnvBackup) error {
+	if err := os.MkdirAll(filepath.Dir(backupPath), 0o700); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
 		return err
