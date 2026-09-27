@@ -150,6 +150,8 @@ go vet ./...
 go run . serve      # 源码直接运行
 ```
 
+路线图（v0.2 多模型路由：虚拟模型 pro/flash 分工、按请求规模自动路由）见 [ROADMAP.md](ROADMAP.md)。
+
 - `devtools/mockupstream`：模拟 OpenAI 兼容上游，用于手工冒烟测试
   （`go run ./devtools/mockupstream 9911 mock-a`）
 - 目录结构：`internal/proxy`（核心反代）、`internal/admin`（管理 API+Web）、
