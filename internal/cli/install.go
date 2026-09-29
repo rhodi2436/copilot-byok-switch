@@ -197,6 +197,22 @@ var doctorCmd = &cobra.Command{
 					check(resp.StatusCode < 500, fmt.Sprintf("上游连通性（HTTP %d）", resp.StatusCode), "检查 API Key 或 Base URL 是否正确")
 				}
 			}
+
+			// 路由配置（v0.2）：仅在配置了路由时检查，避免对旧配置产生噪音。
+			if len(cfg.Routing.VirtualModels) > 0 || cfg.Routing.Utility != nil {
+				if rerr := cfg.ValidateRouting(); rerr != nil {
+					check(false, "路由配置有效", rerr.Error())
+				} else {
+					dv := cfg.Routing.DefaultVirtual
+					if dv == "" {
+						dv = "（未设置，钉住名走激活供应商默认模型）"
+					}
+					check(true, fmt.Sprintf("路由配置有效（%d 个虚拟模型，默认 %s）", len(cfg.Routing.VirtualModels), dv), "")
+				}
+				if _, clash := cfg.Routing.VirtualModels[cfg.VirtualModel]; clash {
+					fmt.Printf("ℹ️  注意: 钉住名 %s 同时是虚拟模型表键，该名按表内路由，cops model use 切换不影响它。\n", cfg.VirtualModel)
+				}
+			}
 		}
 
 		injected := winenv.IsInjected(config.EnvBackupPath())

@@ -15,5 +15,7 @@ func SetAutostart(exePath, args string) error {
 	return ErrUnsupported
 }
 func RemoveAutostart() error       { return ErrUnsupported }
-func GetAutostart() (string, bool) { return "", false }
+func GetAutostart() (string, bool)         { return "", false }
 func FreeConsole()                 {}
+func SoleConsole() bool                    { return false }
+func RelaunchDetached(args ...string) error { return ErrUnsupported }

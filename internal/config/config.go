@@ -4,10 +4,12 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -29,6 +31,9 @@ type Provider struct {
 	APIKey   string `json:"apiKey,omitempty"`
 	Model    string `json:"model,omitempty"` // 激活时代理将请求体中的 model 改写为该值
 	Models   []string `json:"models,omitempty"` // /v1/models 合成列表与 Web 下拉
+	// ModelContext 各真实模型的上下文窗口（token 数），用于 /v1/models 元数据
+	// 与展示；虚拟模型未单独覆盖时回退到这里。
+	ModelContext map[string]int `json:"modelContext,omitempty"`
 	Prices   map[string]ModelPrice `json:"prices,omitempty"`
 	ExtraHeaders map[string]string `json:"extraHeaders,omitempty"`
 	TimeoutSec   int    `json:"timeoutSec,omitempty"`    // 上游请求超时（秒），默认 600
@@ -37,6 +42,11 @@ type Provider struct {
 	// NoUsageInjection 为 true 时不向流式请求注入 stream_options.include_usage
 	// （用于不支持该字段的上游）。
 	NoUsageInjection bool `json:"noUsageInjection,omitempty"`
+	// StripSampling 为 true 时剥离请求体中的采样参数
+	// （temperature/top_p/frequency_penalty/presence_penalty）。
+	// Copilot CLI 会强制发送 temperature:0 / top_p:0.95（copilot-cli#4950），
+	// 部分上游不接受这些字段，可按供应商开启。
+	StripSampling bool `json:"stripSampling,omitempty"`
 }
 
 // RequestLogConfig 请求日志配置。
@@ -54,6 +64,7 @@ type Config struct {
 	VirtualModel string           `json:"virtualModel"` // 写入 COPILOT_MODEL 的虚拟模型名
 	Providers    []Provider       `json:"providers"`
 	RequestLog   RequestLogConfig `json:"requestLog"`
+	Routing      RoutingConfig    `json:"routing"`
 }
 
 const (
@@ -129,6 +140,29 @@ func (c *Config) fillDefaults() {
 	if c.RequestLog.MaxFileMB <= 0 {
 		c.RequestLog.MaxFileMB = 20
 	}
+	for i := range c.Providers {
+		c.Providers[i].cleanModelContext()
+	}
+	c.Routing.Normalize()
+}
+
+// ScrubProviderReferences 删除供应商后清理路由表中对它的悬空引用，
+// 避免后续 PUT routing 因历史残留校验失败。
+func (c *Config) ScrubProviderReferences(name string) {
+	r := &c.Routing
+	for k, t := range r.VirtualModels {
+		if t.Provider == name {
+			delete(r.VirtualModels, k)
+		}
+	}
+	if r.DefaultVirtual != "" {
+		if _, ok := r.VirtualModels[r.DefaultVirtual]; !ok {
+			r.DefaultVirtual = ""
+		}
+	}
+	if r.Utility != nil && r.Utility.Provider == name {
+		r.Utility = nil
+	}
 }
 
 // Save 原子保存配置：先写临时文件再替换，并备份旧文件为 config.json.bak。
@@ -156,6 +190,32 @@ func (c *Config) Save() error {
 	return nil
 }
 
+// ParseContextWindow 解析上下文窗口大小，支持 128k / 1.5m / 128000 写法
+// （k=1000、m=1_000_000，大小写不限），返回正整数 token 数。
+func ParseContextWindow(s string) (int, error) {
+	orig := strings.TrimSpace(s)
+	v := strings.ToLower(orig)
+	if v == "" {
+		return 0, fmt.Errorf("上下文窗口不能为空（示例：128k、1.5m、200000）")
+	}
+	mult := 1
+	switch {
+	case strings.HasSuffix(v, "k"):
+		mult, v = 1_000, strings.TrimSuffix(v, "k")
+	case strings.HasSuffix(v, "m"):
+		mult, v = 1_000_000, strings.TrimSuffix(v, "m")
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f <= 0 {
+		return 0, fmt.Errorf("上下文窗口 %q 不合法（示例：128k、1.5m、200000）", orig)
+	}
+	n := int(math.Round(f * float64(mult)))
+	if n <= 0 {
+		return 0, fmt.Errorf("上下文窗口 %q 不合法（示例：128k、1.5m、200000）", orig)
+	}
+	return n, nil
+}
+
 // Validate 校验供应商字段合法性。
 func (p *Provider) Validate() error {
 	p.Name = strings.TrimSpace(p.Name)
@@ -173,7 +233,30 @@ func (p *Provider) Validate() error {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("Base URL 不合法（需形如 https://host[:port][/path]）: %s", p.BaseURL)
 	}
+	for m, n := range p.ModelContext {
+		if strings.TrimSpace(m) == "" {
+			return fmt.Errorf("模型上下文存在空模型名")
+		}
+		if n <= 0 {
+			return fmt.Errorf("模型 %q 的上下文窗口必须为正整数: %d", m, n)
+		}
+	}
 	return nil
+}
+
+// cleanModelContext 清洗模型上下文表：trim 键、去除空键与非正值条目（幂等）。
+func (p *Provider) cleanModelContext() {
+	for k, v := range p.ModelContext {
+		nk := strings.TrimSpace(k)
+		if nk == "" || v <= 0 {
+			delete(p.ModelContext, k)
+			continue
+		}
+		if nk != k {
+			delete(p.ModelContext, k)
+			p.ModelContext[nk] = v
+		}
+	}
 }
 
 // Find 按名称查找供应商。

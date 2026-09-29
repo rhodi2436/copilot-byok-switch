@@ -52,6 +52,53 @@ func New(cfgPtr *atomic.Pointer[config.Config], st *stats.Tracker, lg *reqlog.Lo
 	}
 }
 
+// route 单次请求的路由解析结果。
+type route struct {
+	provider *config.Provider // 转发目标供应商（BaseURL/密钥/超时/ExtraHeaders 等取自它）
+	model    string           // 改写后的真实模型名；空 = 不改写（透传）
+	rule     string           // 命中规则：utility/virtual/pinned/default/passthrough
+}
+
+// resolveTarget 按请求体 model 名做确定性四级路由（ROADMAP v0.2）：
+//
+//	1. utility — 命中 UtilityPatterns（Copilot CLI 会把 gpt-5.4-nano 等内部
+//	   id 直发 BYOK 端点用于 compaction/auto-mode，见 copilot-cli#4950）
+//	2. virtual — 虚拟模型表命中，可跨供应商
+//	3. pinned  — 钉住名（COPILOT_MODEL 指向的 cfg.VirtualModel）→ DefaultVirtual 表项
+//	4. default — 激活供应商兜底；未知 id 也走这里，永不向上游 404
+//
+// 命中 1-3 时转发参数取目标供应商；PassthroughModel 仅在 default 兜底时生效。
+func resolveTarget(cfg *config.Config, reqModel string) route {
+	r := &cfg.Routing
+	if r.MatchesUtility(reqModel) {
+		if p, i := cfg.Find(r.Utility.Provider); i >= 0 {
+			return route{provider: p, model: r.Utility.Model, rule: "utility"}
+		}
+	}
+	if reqModel != "" {
+		if t, ok := r.VirtualModels[reqModel]; ok {
+			if p, i := cfg.Find(t.Provider); i >= 0 {
+				return route{provider: p, model: t.Model, rule: "virtual"}
+			}
+		}
+	}
+	if reqModel != "" && reqModel == cfg.VirtualModel && r.DefaultVirtual != "" {
+		if t, ok := r.VirtualModels[r.DefaultVirtual]; ok {
+			if p, i := cfg.Find(t.Provider); i >= 0 {
+				return route{provider: p, model: t.Model, rule: "pinned"}
+			}
+		}
+	}
+	p := cfg.ActiveProvider()
+	if p == nil {
+		return route{}
+	}
+	if p.PassthroughModel {
+		return route{provider: p, rule: "passthrough"}
+	}
+	return route{provider: p, model: p.Model, rule: "default"}
+}
+
 type usage struct {
 	PromptTokens     int64 `json:"prompt_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
@@ -114,26 +161,15 @@ var skipRespHeaders = map[string]bool{
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	cfg := s.cfgPtr.Load()
-	p := cfg.ActiveProvider()
 
 	entry := reqlog.Entry{
 		Method: r.Method,
 		Path:   r.URL.Path,
 	}
 
-	if p == nil {
-		entry.Error = "no active provider"
-		entry.Time = start.Format("2006-01-02 15:04:05.000")
-		s.log.Log(entry)
-		writeJSONError(w, http.StatusServiceUnavailable,
-			"cops: 尚未配置或激活任何供应商。请运行 cops add 添加，再运行 cops switch <名称> 激活。")
-		return
-	}
-	entry.Provider = p.Name
-
-	// GET /v1/models：有模型清单时本地合成，避免依赖上游可用性。
+	// GET /v1/models：本地合成（钉住名 + 虚拟名 + 真实清单），避免依赖上游可用性。
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
-		s.handleModels(w, r, cfg, p)
+		s.handleModels(w, r, cfg)
 		return
 	}
 
@@ -144,11 +180,33 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cops: 读取请求体失败: %v", err)
 		return
 	}
+	// 先探测请求体中的 model 名做路由解析（超大体的前 64MB 足够包含 model 字段）。
+	var probe struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &probe)
+
+	rt := resolveTarget(cfg, probe.Model)
+	if rt.provider == nil {
+		entry.Error = "no route / no active provider"
+		entry.Time = start.Format("2006-01-02 15:04:05.000")
+		s.log.Log(entry)
+		writeJSONError(w, http.StatusServiceUnavailable,
+			"cops: 尚未配置或激活任何供应商，且该请求未命中任何路由。请运行 cops add 添加，再运行 cops switch <名称> 激活。")
+		return
+	}
+	p := rt.provider
+	entry.Provider = p.Name
+	entry.RouteRule = rt.rule
+	if rt.model != "" && probe.Model != "" && probe.Model != rt.model {
+		entry.VirtualModel = probe.Model
+	}
+
 	if int64(len(body)) > hardBodyCap {
 		// 超大请求体：不做改写，直接透传剩余部分。
 		upstreamBody = io.MultiReader(bytes.NewReader(body), r.Body)
 	} else {
-		rewritten := s.rewriteBody(body, p, &entry)
+		rewritten := s.rewriteBody(body, p, rt.model, &entry)
 		upstreamBody = bytes.NewReader(rewritten)
 	}
 
@@ -249,17 +307,28 @@ func upstreamPath(p string) string {
 	return p
 }
 
-// rewriteBody 改写 JSON 请求体：model 重映射 + 流式请求注入 include_usage。
-func (s *Server) rewriteBody(body []byte, p *config.Provider, entry *reqlog.Entry) []byte {
+// rewriteBody 改写 JSON 请求体：model 重映射 + 流式请求注入 include_usage +
+// 按供应商剥离采样参数。targetModel 为空表示不改写 model。
+func (s *Server) rewriteBody(body []byte, p *config.Provider, targetModel string, entry *reqlog.Entry) []byte {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		return body
 	}
 	changed := false
-	if !p.PassthroughModel && p.Model != "" {
-		if cur, ok := m["model"].(string); !ok || cur != p.Model {
-			m["model"] = p.Model
+	if targetModel != "" {
+		if cur, ok := m["model"].(string); !ok || cur != targetModel {
+			m["model"] = targetModel
 			changed = true
+		}
+	}
+	// Copilot CLI 强制发送 temperature:0 / top_p:0.95（copilot-cli#4950），
+	// 部分上游不接受这些字段；StripSampling 按供应商剥离。
+	if p.StripSampling {
+		for _, k := range []string{"temperature", "top_p", "frequency_penalty", "presence_penalty"} {
+			if _, ok := m[k]; ok {
+				delete(m, k)
+				changed = true
+			}
 		}
 	}
 	if stream, _ := m["stream"].(bool); stream && !p.NoUsageInjection {
@@ -283,38 +352,96 @@ func (s *Server) rewriteBody(body []byte, p *config.Provider, entry *reqlog.Entr
 	return out
 }
 
-// handleModels 合成 /v1/models 响应；无模型清单时透传上游。
-func (s *Server) handleModels(w http.ResponseWriter, r *http.Request, cfg *config.Config, p *config.Provider) {
-	models := append([]string{}, p.Models...)
-	if p.Model != "" {
-		has := false
-		for _, m := range models {
-			if m == p.Model {
-				has = true
-				break
-			}
+// handleModels 合成 /v1/models 响应：钉住名 + 虚拟模型名（附 cops_target 标注）+
+// 激活供应商真实清单；全部为空时透传上游。
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
+	p := cfg.ActiveProvider()
+	type item struct {
+		id, target string
+		ctxWin     int
+	}
+	var list []item
+	seen := map[string]bool{}
+	add := func(id, target string, ctxWin int) {
+		if id == "" || seen[id] {
+			return
 		}
-		if !has {
-			models = append([]string{p.Model}, models...)
+		seen[id] = true
+		list = append(list, item{id, target, ctxWin})
+	}
+
+	// 钉住名（COPILOT_MODEL 指向它），标注其默认去向与生效上下文
+	// （DefaultVirtual 表项 > 激活供应商默认模型；passthrough 无已知值）。
+	if cfg.VirtualModel != "" && (p == nil || !p.PassthroughModel) {
+		pinCtx := 0
+		if t, ok := cfg.Routing.VirtualModels[cfg.Routing.DefaultVirtual]; ok && cfg.Routing.DefaultVirtual != "" {
+			pinCtx = cfg.TargetContext(t)
+		} else if p != nil {
+			pinCtx = p.ModelContext[p.Model]
+		}
+		add(cfg.VirtualModel, defaultTargetAnnotation(cfg, p), pinCtx)
+	}
+	for _, name := range cfg.Routing.SortedVirtualModels() {
+		t := cfg.Routing.VirtualModels[name]
+		add(name, t.Provider+"/"+t.Model, cfg.TargetContext(t))
+	}
+	if p != nil {
+		add(p.Model, "", p.ModelContext[p.Model])
+		for _, m := range p.Models {
+			add(m, "", p.ModelContext[m])
 		}
 	}
-	if !p.PassthroughModel && cfg.VirtualModel != "" {
-		models = append([]string{cfg.VirtualModel}, models...)
-	}
-	if len(models) == 0 {
+
+	if len(list) == 0 {
+		if p == nil {
+			writeJSONError(w, http.StatusServiceUnavailable,
+				"cops: 尚未配置或激活任何供应商。请运行 cops add 添加，再运行 cops switch <名称> 激活。")
+			return
+		}
 		s.forwardRaw(w, r, p, nil)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	data := make([]any, 0, len(models))
-	for _, m := range models {
-		data = append(data, map[string]any{
-			"id": m, "object": "model",
-			"created": time.Now().Unix(), "owned_by": p.Name,
-		})
+	owner := "cops"
+	if p != nil {
+		owner = p.Name
+	}
+	data := make([]any, 0, len(list))
+	for _, it := range list {
+		m := map[string]any{
+			"id": it.id, "object": "model",
+			"created": time.Now().Unix(), "owned_by": owner,
+		}
+		if it.target != "" {
+			m["cops_target"] = it.target
+		}
+		if it.ctxWin > 0 {
+			m["context_length"] = it.ctxWin
+		}
+		data = append(data, m)
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
+}
+
+// defaultTargetAnnotation 钉住名条目的 cops_target 标注：
+// DefaultVirtual 表项 > passthrough > 激活供应商默认模型。
+func defaultTargetAnnotation(cfg *config.Config, p *config.Provider) string {
+	if cfg.Routing.DefaultVirtual != "" {
+		if t, ok := cfg.Routing.VirtualModels[cfg.Routing.DefaultVirtual]; ok {
+			return t.Provider + "/" + t.Model
+		}
+	}
+	if p == nil {
+		return ""
+	}
+	if p.PassthroughModel {
+		return "passthrough"
+	}
+	if p.Model != "" {
+		return p.Name + "/" + p.Model
+	}
+	return p.Name
 }
 
 // forwardRaw 原样转发（用于无清单时的 /v1/models 等）。

@@ -26,11 +26,19 @@ type ProviderInfo struct {
 	Model string
 }
 
+// ModelInfo 托盘展示的虚拟模型摘要（Name 虚拟名，Target "供应商/真实模型"）。
+type ModelInfo struct {
+	Name   string
+	Target string
+}
+
 // State 托盘状态快照。
 type State struct {
-	Active    string
-	Providers []ProviderInfo
-	Injected  bool
+	Active         string
+	Providers      []ProviderInfo
+	DefaultVirtual string
+	VirtualModels  []ModelInfo
+	Injected       bool
 }
 
 // Signature 状态签名：变化则重建菜单。
@@ -38,6 +46,8 @@ func (s State) Signature() string {
 	var b strings.Builder
 	b.WriteString("a=")
 	b.WriteString(s.Active)
+	b.WriteString(";dv=")
+	b.WriteString(s.DefaultVirtual)
 	b.WriteString(";i=")
 	if s.Injected {
 		b.WriteString("1")
@@ -50,24 +60,42 @@ func (s State) Signature() string {
 		b.WriteString("/")
 		b.WriteString(p.Model)
 	}
+	for _, m := range s.VirtualModels {
+		b.WriteString(";m=")
+		b.WriteString(m.Name)
+		b.WriteString("/")
+		b.WriteString(m.Target)
+	}
 	return b.String()
 }
 
 func (s State) Tooltip() string {
+	var b strings.Builder
+	b.WriteString("cops · ")
 	if s.Active == "" {
-		return "cops · 未激活供应商"
-	}
-	for _, p := range s.Providers {
-		if p.Name == s.Active {
-			return "cops · " + p.Name + " (" + p.Model + ")"
+		b.WriteString("未激活供应商")
+	} else {
+		model := ""
+		for _, p := range s.Providers {
+			if p.Name == s.Active {
+				model = p.Model
+			}
+		}
+		b.WriteString(s.Active)
+		if model != "" {
+			b.WriteString(" (" + model + ")")
 		}
 	}
-	return "cops · " + s.Active
+	if s.DefaultVirtual != "" {
+		b.WriteString(" · 模型 " + s.DefaultVirtual)
+	}
+	return b.String()
 }
 
 // Actions 托盘动作（由调用方注入）。
 type Actions struct {
 	Switch       func(name string) error
+	UseModel     func(name string) error // 切换默认虚拟模型（v0.2）
 	OpenAdmin    func()
 	ToggleInject func() error // 幂等切换：已注入→恢复，未注入→注入
 	Quit         func()       // 完整退出编排（恢复+停代理+退出托盘）
@@ -139,6 +167,31 @@ func (a *app) rebuild() {
 
 	title := systray.AddMenuItem(st.Tooltip(), "")
 	title.Disable()
+
+	if len(st.VirtualModels) > 0 {
+		h := systray.AddMenuItem("模型（虚拟名 → 真实模型）", "切换默认虚拟模型，即时生效")
+		h.Disable()
+		for _, m := range st.VirtualModels {
+			label := m.Name
+			if m.Target != "" {
+				label += "  → " + m.Target
+			}
+			item := systray.AddMenuItem(label, "默认虚拟模型 → "+m.Name)
+			if m.Name == st.DefaultVirtual {
+				item.Check()
+			} else {
+				item.Uncheck()
+			}
+			name := m.Name
+			a.watch(ctx, item, func() {
+				if err := a.act.UseModel(name); err != nil {
+					log.Printf("tray use model %s: %v", name, err)
+				}
+				a.rebuild()
+			})
+		}
+		systray.AddSeparator()
+	}
 
 	if len(st.Providers) == 0 {
 		m := systray.AddMenuItem("尚未配置供应商，点击打开管理页…", "")

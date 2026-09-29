@@ -6,10 +6,13 @@ package winenv
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"syscall"
 	"time"
 	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -100,6 +103,29 @@ func SetAutostart(exePath, args string) error {
 func FreeConsole() {
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	kernel32.NewProc("FreeConsole").Call()
+}
+
+// SoleConsole 报告当前控制台是否只挂载了本进程——双击 exe / Start-Process
+// 启动的典型特征（真实终端里 cmd/pwsh 也会挂载同一控制台）。
+// 无控制台（已处于分离模式）返回 false，保证重启不会递归。
+func SoleConsole() bool {
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	var buf [1]uint32
+	n, _, _ := kernel32.NewProc("GetConsoleProcessList").Call(
+		uintptr(unsafe.Pointer(&buf[0])), 1)
+	return n == 1
+}
+
+// RelaunchDetached 以 DETACHED_PROCESS 方式重新拉起自身（子进程完全无控制台）。
+// 调用方应随即返回退出，使原控制台窗口干净关闭，避免双击启动时残留黑窗。
+func RelaunchDetached(args ...string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS}
+	return cmd.Start()
 }
 
 // RemoveAutostart 删除自启动项。

@@ -19,6 +19,10 @@ type Entry struct {
 	Time             string `json:"time"`
 	Provider         string `json:"provider,omitempty"`
 	Model            string `json:"model,omitempty"`
+	// VirtualModel 请求中的原始模型名（虚拟名/别名）；与真实 Model 不同时记录。
+	VirtualModel string `json:"virtualModel,omitempty"`
+	// RouteRule 命中的路由规则：utility / virtual / pinned / default / passthrough。
+	RouteRule        string `json:"routeRule,omitempty"`
 	Method           string `json:"method"`
 	Path             string `json:"path"`
 	Status           int    `json:"status"`

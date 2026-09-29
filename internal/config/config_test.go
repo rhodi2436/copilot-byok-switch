@@ -108,6 +108,74 @@ func TestPublicURL(t *testing.T) {
 	}
 }
 
+func TestParseContextWindow(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"128k", 128000},
+		{"128K", 128000},
+		{"1.5m", 1500000},
+		{"1M", 1000000},
+		{"200000", 200000},
+		{" 8k ", 8000},
+		{"0.5m", 500000},
+	}
+	for _, tc := range cases {
+		got, err := ParseContextWindow(tc.in)
+		if err != nil || got != tc.want {
+			t.Errorf("ParseContextWindow(%q) = %d, %v; want %d", tc.in, got, err, tc.want)
+		}
+	}
+	for _, bad := range []string{"", " ", "abc", "k", "12x", "-128k", "0", "-5"} {
+		if _, err := ParseContextWindow(bad); err == nil {
+			t.Errorf("ParseContextWindow(%q) should fail", bad)
+		}
+	}
+}
+
+func TestModelContextValidateAndNormalize(t *testing.T) {
+	p := Provider{Name: "x", BaseURL: "https://a.com",
+		ModelContext: map[string]int{"m1": 128000, "m2": -1, " ": 100}}
+	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "正整数") {
+		t.Fatalf("negative context should be rejected, got %v", err)
+	}
+	p.ModelContext["m2"] = 0
+	if err := p.Validate(); err == nil {
+		t.Fatal("zero context should also be rejected by Validate")
+	}
+	p.cleanModelContext()
+	if _, ok := p.ModelContext["m2"]; ok {
+		t.Error("zero context entry should be cleaned by fillDefaults")
+	}
+	if _, ok := p.ModelContext[" "]; ok {
+		t.Error("blank key should be cleaned by fillDefaults")
+	}
+	if p.ModelContext["m1"] != 128000 {
+		t.Error("valid entry lost")
+	}
+}
+
+func TestModelContextRoundtrip(t *testing.T) {
+	t.Setenv("USERPROFILE", t.TempDir())
+	c := Default()
+	c.Providers = []Provider{{
+		Name: "glm", BaseURL: "https://open.bigmodel.cn/api/paas/v4",
+		ModelContext: map[string]int{"glm-4.7": 128000, "glm-4-flash": 8000},
+	}}
+	c.Active = "glm"
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Providers[0].ModelContext["glm-4.7"] != 128000 || got.Providers[0].ModelContext["glm-4-flash"] != 8000 {
+		t.Fatalf("modelContext roundtrip mismatch: %+v", got.Providers[0].ModelContext)
+	}
+}
+
 func TestMaskKey(t *testing.T) {
 	if MaskKey("sk-1234567890abcdef") != "sk-1...cdef" {
 		t.Fatal(MaskKey("sk-1234567890abcdef"))

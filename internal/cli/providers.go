@@ -123,6 +123,13 @@ var addCmd = &cobra.Command{
 			po, _ := cmd.Flags().GetFloat64("price-out")
 			p.Prices = map[string]config.ModelPrice{model: {InputPerMillionTokens: pin, OutputPerMillionTokens: po, Currency: "CNY"}}
 		}
+		if ctxFlag, _ := cmd.Flags().GetString("context"); strings.TrimSpace(ctxFlag) != "" {
+			n, err := config.ParseContextWindow(ctxFlag)
+			if err != nil {
+				return err
+			}
+			p.ModelContext = map[string]int{model: n}
+		}
 		if t, _ := cmd.Flags().GetInt("timeout"); t > 0 {
 			p.TimeoutSec = t
 		}
@@ -328,6 +335,7 @@ func init() {
 	addCmd.Flags().StringSlice("models", nil, "模型清单（逗号分隔）")
 	addCmd.Flags().Float64("price-in", 0, "每百万输入 token 单价")
 	addCmd.Flags().Float64("price-out", 0, "每百万输出 token 单价")
+	addCmd.Flags().String("context", "", "默认模型上下文窗口（如 128k、1.5m）")
 	addCmd.Flags().Int("timeout", 0, "上游超时秒数")
 	switchCmd.Flags().String("model", "", "同时更新该供应商的默认模型")
 	rootCmd.AddCommand(addCmd, listCmd, currentCmd, switchCmd, removeCmd, testCmd)

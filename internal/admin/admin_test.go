@@ -16,6 +16,8 @@ import (
 
 func newTestAdmin(t *testing.T, providers ...config.Provider) (*Server, *atomic.Pointer[config.Config]) {
 	t.Helper()
+	// 隔离 HOME，避免 Save() 覆盖真实 ~/.cops/config.json。
+	t.Setenv("USERPROFILE", t.TempDir())
 	c := config.Default()
 	c.Providers = providers
 	if len(providers) > 0 {

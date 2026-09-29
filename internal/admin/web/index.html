@@ -3,246 +3,1006 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>cops · Copilot 供应商切换</title>
+<title>COPS · Neon Console</title>
 <style>
-  :root { --bg:#0f1117; --card:#1a1d27; --line:#2a2e3b; --tx:#e6e8ee; --dim:#8b90a0; --acc:#4f8cff; --ok:#34c77b; --warn:#e8b339; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--tx); font:14px/1.6 "Segoe UI",system-ui,sans-serif; }
-  .wrap { max-width:1080px; margin:0 auto; padding:24px 20px 60px; }
-  h1 { font-size:20px; margin:0 0 4px; } h1 small { color:var(--dim); font-weight:normal; font-size:13px; }
-  .env { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 16px; margin:16px 0; font-size:13px; }
-  .env code { background:#232735; padding:1px 6px; border-radius:4px; color:#9ecbff; }
-  .sec { margin-top:28px; } .sec h2 { font-size:16px; margin:0 0 12px; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; position:relative; }
-  .card.active { border-color:var(--ok); box-shadow:0 0 0 1px var(--ok); }
-  .card .name { font-weight:600; font-size:15px; }
-  .card .badge { position:absolute; top:12px; right:12px; font-size:12px; color:var(--ok); }
-  .card .meta { color:var(--dim); font-size:12px; margin-top:6px; word-break:break-all; }
-  .card .actions { margin-top:12px; display:flex; gap:8px; }
-  button { background:var(--acc); color:#fff; border:0; border-radius:6px; padding:6px 14px; font-size:13px; cursor:pointer; }
-  button.ghost { background:transparent; border:1px solid var(--line); color:var(--dim); }
-  button.danger { background:transparent; border:1px solid #5b2b33; color:#e07a88; }
-  button:disabled { opacity:.4; cursor:not-allowed; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
-  th { color:var(--dim); font-weight:500; }
-  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
-  .dialog-bg { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; }
-  .dialog-bg.show { display:flex; }
-  .dialog { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:22px; width:min(560px,92vw); max-height:86vh; overflow:auto; }
-  .dialog h3 { margin:0 0 14px; font-size:15px; }
-  .dialog label { display:block; font-size:12px; color:var(--dim); margin:10px 0 4px; }
-  .dialog input { width:100%; background:#12141c; border:1px solid var(--line); border-radius:6px; color:var(--tx); padding:7px 10px; font-size:13px; }
-  .dialog .row { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
-  .hint { color:var(--dim); font-size:12px; }
-  .err { color:#e07a88; font-size:13px; margin-top:8px; white-space:pre-wrap; }
-  .toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
-  .log-err td { color:#e07a88; }
-  .empty { color:var(--dim); padding:18px 0; }
+  :root{
+    --bg:#0d0b1e; --bg2:#0f0d24; --panel:rgba(255,255,255,.045); --panel2:rgba(255,255,255,.08);
+    --line:#2a2a4a; --line2:#3d3d68;
+    --tx:#e8e6f5; --dim:#8a8ab8; --faint:#5c5c8c;
+    --purple:#7c4dff; --purple2:#9d7bff; --cyan:#00e5ff; --cyan2:#6ff2ff;
+    --pink:#f471b5; --ok:#34d399; --warn:#e8b339; --err:#f871a8;
+    --glowP:rgba(124,77,255,.5); --glowC:rgba(0,229,255,.4);
+    --mono:"Cascadia Code",Consolas,ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scrollbar-color:var(--line) var(--bg)}
+  body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.65 "Segoe UI",system-ui,sans-serif}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:radial-gradient(900px 500px at 12% -5%,rgba(124,77,255,.16),transparent 60%),
+               radial-gradient(800px 500px at 95% 105%,rgba(0,229,255,.11),transparent 60%)}
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.014) 0 1px,transparent 1px 3px)}
+  #app{position:relative;z-index:1}
+
+  /* ── 顶栏 ───────────────────────────── */
+  #topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:22px;
+    padding:0 22px;height:56px;border-bottom:1px solid var(--line);
+    background:rgba(13,11,30,.82);backdrop-filter:blur(10px)}
+  .logo{font-weight:800;font-size:17px;letter-spacing:4px;
+    background:linear-gradient(92deg,var(--purple2),var(--cyan));-webkit-background-clip:text;background-clip:text;color:transparent;
+    text-shadow:0 0 18px rgba(124,77,255,.35)}
+  nav{display:flex;gap:4px;height:100%}
+  .tab{display:flex;align-items:center;padding:0 16px;color:var(--dim);text-decoration:none;font-size:14px;position:relative;transition:color .18s}
+  .tab:hover{color:var(--tx)}
+  .tab::after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:2px;border-radius:2px;
+    background:linear-gradient(90deg,var(--purple),var(--cyan));box-shadow:0 0 10px var(--glowP);
+    transform:scaleX(0);transform-origin:left;transition:transform .22s}
+  .tab.on{color:#ddd4ff}
+  .tab.on::after{transform:scaleX(1)}
+  .net{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--faint);font-size:12px;font-family:var(--mono)}
+  .net .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px rgba(52,211,153,.8);animation:pulse 2.2s infinite}
+  .net.off .dot{background:var(--warn);box-shadow:0 0 8px rgba(232,179,57,.8);animation:none}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+
+  /* ── 布局 ───────────────────────────── */
+  main{max-width:1180px;margin:0 auto;padding:24px 22px 80px}
+  .view{display:none;animation:fadein .25s}
+  .view.on{display:block}
+  @keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .bar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:4px 0 14px;flex-wrap:wrap}
+  h2{font-size:17px;margin:0;letter-spacing:.5px}
+  h3{font-size:13px;margin:0 0 10px;color:var(--dim);font-weight:600;letter-spacing:1px;text-transform:uppercase}
+  .lab{font-size:11px;color:var(--faint);letter-spacing:2px;margin-bottom:8px;font-family:var(--mono)}
+  .g{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px;backdrop-filter:blur(8px)}
+  .hint{color:var(--faint);font-size:12px}
+  .err{color:var(--err);font-size:13px;margin-top:8px;white-space:pre-wrap}
+  .empty{color:var(--faint);padding:22px 0;text-align:center}
+  .split{display:grid;grid-template-columns:3fr 2fr;gap:16px}
+  @media(max-width:900px){.split{grid-template-columns:1fr}}
+
+  /* ── 控件 ───────────────────────────── */
+  button{font:inherit}
+  .btn{background:transparent;border:1px solid var(--line);color:var(--dim);border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;transition:all .18s}
+  .btn:hover{border-color:var(--purple);color:var(--tx);box-shadow:0 0 12px rgba(124,77,255,.25)}
+  .btn.pri{background:linear-gradient(135deg,var(--purple),#5a35d8);border-color:transparent;color:#fff;box-shadow:0 0 16px rgba(124,77,255,.35)}
+  .btn.pri:hover{box-shadow:0 0 22px rgba(124,77,255,.55);color:#fff}
+  .btn.dan{border-color:#5b2b47;color:var(--err)}
+  .btn.dan:hover{border-color:var(--err);box-shadow:0 0 12px rgba(244,113,181,.25);color:var(--err)}
+  .btn.mini{padding:3px 10px;font-size:12px;border-radius:6px}
+  select.in,input.in,textarea.in{background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--tx);padding:7px 10px;font-size:13px;outline:none;transition:border .18s,box-shadow .18s}
+  select.in:focus,input.in:focus,textarea.in:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.12)}
+  select.in option{background:var(--bg2)}
+  input.mono{font-family:var(--mono)}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ── chips / pills ──────────────────── */
+  .chips{display:flex;flex-wrap:wrap;gap:9px}
+  .chip{border:1px solid var(--line);color:var(--dim);border-radius:20px;padding:5px 16px;font-size:13px;cursor:pointer;transition:all .18s;background:transparent;user-select:none}
+  .chip:hover{border-color:var(--line2);color:var(--tx)}
+  .chip.on{background:rgba(124,77,255,.22);border-color:var(--purple);color:#e6dcff;box-shadow:0 0 14px var(--glowP),inset 0 0 8px rgba(124,77,255,.15)}
+  .chip.cy.on{background:rgba(0,229,255,.12);border-color:var(--cyan);color:#c9f7ff;box-shadow:0 0 14px var(--glowC)}
+  .chip.flash{animation:chipflash .5s}
+  @keyframes chipflash{0%{box-shadow:0 0 26px var(--glowP)}100%{box-shadow:0 0 14px var(--glowP)}}
+  .chip small{color:var(--faint);font-family:var(--mono);font-size:11px}
+  .chip.on small{color:inherit;opacity:.75}
+
+  /* ── 供应商卡片 ──────────────────────── */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+  .pcard{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;backdrop-filter:blur(8px);transition:all .2s}
+  .pcard:hover{border-color:var(--line2);transform:translateY(-2px)}
+  .pcard.on{border-color:var(--purple);box-shadow:0 0 18px rgba(124,77,255,.28),inset 0 0 14px rgba(124,77,255,.07)}
+  .pcard .name{font-weight:700;font-size:15px;font-family:var(--mono);letter-spacing:.5px}
+  .pcard .badge{position:absolute;top:14px;right:14px;font-size:11px;color:var(--cyan);font-family:var(--mono);text-shadow:0 0 8px var(--glowC)}
+  .pcard .meta{color:var(--dim);font-size:12px;margin-top:8px;word-break:break-all;line-height:1.8}
+  .pcard .meta b{color:var(--tx);font-weight:600}
+  .pcard .acts{margin-top:14px;display:flex;gap:8px}
+
+  /* ── 路由卡片行 ─────────────────────── */
+  .rt{display:grid;grid-template-columns:34px 1.1fr .9fr 1.2fr 110px 40px;gap:10px;align-items:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;transition:border .18s}
+  .rt:hover{border-color:var(--line2)}
+  .rt input,.rt select{background:var(--bg2);border:1px solid var(--line);border-radius:7px;color:var(--tx);padding:6px 9px;font-size:13px;width:100%;outline:none;transition:border .18s,box-shadow .18s}
+  .rt input:focus,.rt select:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.12)}
+  .rt .star{background:none;border:0;color:var(--faint);font-size:17px;cursor:pointer;padding:2px;transition:all .18s}
+  .rt .star:hover{color:var(--warn);transform:scale(1.15)}
+  .rt .star.on{color:var(--warn);text-shadow:0 0 10px rgba(232,179,57,.7)}
+  .rt .del{background:transparent;border:1px solid #5b2b47;color:var(--err);border-radius:7px;padding:4px 0;cursor:pointer;font-size:13px;transition:all .18s}
+  .rt .del:hover{border-color:var(--err);box-shadow:0 0 10px rgba(244,113,181,.3)}
+  .rt.isdef{border-color:rgba(232,179,57,.35)}
+  @media(max-width:980px){.rt{grid-template-columns:34px 1fr 1fr;grid-auto-rows:auto}.rt input,.rt select{width:100%}}
+
+  /* ── 表格 ───────────────────────────── */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--faint);font-weight:500;font-size:12px;letter-spacing:.5px}
+  td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  tr.clickable{cursor:pointer;transition:background .15s}
+  tr.clickable:hover{background:rgba(124,77,255,.06)}
+  tr.lerr td{color:var(--err)}
+  tr.det td{background:var(--bg2);border-bottom:1px solid var(--line);padding:14px 16px}
+  .kv{display:grid;grid-template-columns:130px 1fr;gap:4px 14px;font-size:13px}
+  .kv b{color:var(--faint);font-weight:500;font-family:var(--mono);font-size:12px}
+  pre.body{background:#0a0918;border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;max-height:260px;font-family:var(--mono);font-size:12px;color:#b8c7ff;white-space:pre-wrap;word-break:break-all;margin:8px 0 0}
+  .badge-rule{display:inline-block;border:1px solid var(--line2);border-radius:5px;padding:0 7px;font-size:11px;font-family:var(--mono);color:var(--cyan2)}
+  .st{font-family:var(--mono);font-size:12px}
+  .st.ok{color:var(--ok)} .st.bad{color:var(--err)} .st.warn{color:var(--warn)}
+
+  /* ── 状态条 / 迷你流 ────────────────── */
+  .statline{display:flex;flex-wrap:wrap;gap:8px 26px;font-size:13px;color:var(--dim)}
+  .statline b{color:var(--tx)}
+  .statline .ok{color:var(--ok)} .statline .warn{color:var(--warn)}
+  code{background:rgba(124,77,255,.13);border:1px solid rgba(124,77,255,.25);padding:1px 7px;border-radius:5px;color:#c9b8ff;font-family:var(--mono);font-size:12px}
+  code.cp{cursor:pointer}code.cp:hover{border-color:var(--cyan)}
+  .chev{display:inline-block;width:13px;color:var(--faint)}
+  .warn{color:var(--warn)}
+  #utCard.off{opacity:.55}
+  .feed{font-family:var(--mono);font-size:12px}
+  .feed .row{display:flex;gap:14px;padding:5px 2px;border-bottom:1px dashed rgba(42,42,74,.6);color:var(--dim);white-space:nowrap;overflow:hidden}
+  .feed .row:last-child{border-bottom:0}
+  .feed .t{color:var(--faint)} .feed .m{color:#c9b8ff} .feed .r{color:var(--cyan2)} .feed .s.bad{color:var(--err)}
+
+  /* ── 图表 ───────────────────────────── */
+  .chart{width:100%}
+  .chart .bar{fill:url(#gradPC);transition:opacity .15s;cursor:default}
+  .chart .bar:hover{opacity:.8}
+  .chart .axis{stroke:var(--line);stroke-width:1}
+  .chart .xl{fill:var(--faint);font-size:10px;font-family:var(--mono)}
+  .chart .yl{fill:var(--faint);font-size:10px;font-family:var(--mono)}
+  .hbar{margin:8px 0}
+  .hbar .cap{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:4px}
+  .hbar .cap b{color:var(--tx);font-family:var(--mono);font-weight:600}
+  .hbar .track{height:10px;border-radius:6px;background:rgba(255,255,255,.05);overflow:hidden}
+  .hbar .fill{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--purple),var(--cyan));box-shadow:0 0 10px var(--glowP)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg button{background:transparent;border:0;color:var(--dim);padding:5px 14px;font-size:12px;cursor:pointer}
+  .seg button.on{background:rgba(124,77,255,.25);color:#e6dcff}
+
+  /* ── 弹窗（蒙层点击不关闭）──────────── */
+  .ovl{position:fixed;inset:0;background:rgba(5,4,15,.7);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:50}
+  .ovl.show{display:flex}
+  .dlg{background:#14112e;border:1px solid var(--line2);border-radius:16px;padding:0;width:min(620px,94vw);max-height:88vh;overflow:auto;box-shadow:0 0 40px rgba(124,77,255,.25),0 24px 60px rgba(0,0,0,.5)}
+  .dlg .dh{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#14112e;z-index:2}
+  .dlg .dh h3{margin:0;font-size:15px;letter-spacing:.5px}
+  .dlg .x{background:none;border:0;color:var(--faint);font-size:18px;cursor:pointer;padding:2px 8px;border-radius:6px}
+  .dlg .x:hover{color:var(--err);background:rgba(244,113,181,.1)}
+  .dlg .db{padding:18px 20px}
+  .dlg label{display:block;font-size:12px;color:var(--dim);margin:13px 0 5px}
+  .dlg label:first-child{margin-top:0}
+  .dlg input.in{width:100%}
+  .dlg .df{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--line);position:sticky;bottom:0;background:#14112e}
+  .frow{display:flex;gap:10px}.frow>*{flex:1}
+
+  /* chip 标签输入 */
+  .chipin{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;transition:border .18s,box-shadow .18s}
+  .chipin:focus-within{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.12)}
+  .chipin input{flex:1;min-width:130px;border:0;background:transparent;color:var(--tx);font-size:13px;outline:none;padding:4px}
+  .tag{display:inline-flex;align-items:center;background:rgba(124,77,255,.18);border:1px solid rgba(124,77,255,.45);border-radius:6px;padding:2px 4px 2px 9px;font-size:12px;font-family:var(--mono);color:#d9ccff}
+  .tag i{cursor:pointer;margin-left:6px;font-style:normal;color:var(--faint);border-radius:4px;padding:0 4px}
+  .tag i:hover{color:var(--err)}
+  .mcr{display:grid;grid-template-columns:1fr 130px 34px;gap:8px;margin-top:8px}
+  .mcr button{background:transparent;border:1px solid #5b2b47;color:var(--err);border-radius:7px;cursor:pointer;font-size:12px}
+  .mcr button:hover{border-color:var(--err)}
+
+  /* ── toast ─────────────────────────── */
+  #toasts{position:fixed;right:20px;bottom:20px;display:flex;flex-direction:column;gap:8px;z-index:80}
+  .toast{background:#161233;border:1px solid var(--line2);border-left:3px solid var(--cyan);border-radius:10px;padding:10px 16px;font-size:13px;color:var(--tx);box-shadow:0 8px 28px rgba(0,0,0,.5),0 0 18px rgba(0,229,255,.12);animation:tin .25s;max-width:380px}
+  .toast.err{border-left-color:var(--err);box-shadow:0 8px 28px rgba(0,0,0,.5),0 0 18px rgba(244,113,181,.2)}
+  .toast.ok{border-left-color:var(--ok)}
+  .toast.out{animation:tout .25s forwards}
+  @keyframes tin{from{opacity:0;transform:translateX(24px)}to{opacity:1}}
+  @keyframes tout{to{opacity:0;transform:translateX(24px)}}
+
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>cops <small>· Copilot CLI BYOK 供应商切换 <span id="ver"></span></small></h1>
-  <div class="env" id="envInfo">加载中…</div>
+<div id="app">
+  <header id="topbar">
+    <div class="logo">COPS</div>
+    <nav id="tabs">
+      <a class="tab" href="#/overview" data-t="overview">总览</a>
+      <a class="tab" href="#/providers" data-t="providers">供应商</a>
+      <a class="tab" href="#/routing" data-t="routing">路由</a>
+      <a class="tab" href="#/stats" data-t="stats">统计</a>
+      <a class="tab" href="#/logs" data-t="logs">日志</a>
+    </nav>
+    <div class="net" id="net"><span class="dot"></span><span id="netTx">ONLINE</span><span id="ver"></span></div>
+  </header>
 
-  <div class="sec">
-    <div class="toolbar"><h2>供应商</h2><button onclick="ui.edit(null)">＋ 添加供应商</button></div>
-    <div class="cards" id="cards"></div>
-  </div>
+  <main>
+    <section class="view" id="v-overview">
+      <div class="g">
+        <div class="lab">ACTIVE PROVIDER ─ 点击切换</div>
+        <div class="chips" id="ovProv"></div>
+        <div class="lab" style="margin-top:16px">MODEL ─ 点击切换默认虚拟模型</div>
+        <div class="chips" id="ovModel"></div>
+      </div>
+      <div class="g" id="ovStatus">加载中…</div>
+      <div class="g">
+        <div class="bar" style="margin:0 0 10px"><h3 style="margin:0">最近请求</h3>
+          <button class="btn mini" onclick="ui.refreshLogs()">刷新</button></div>
+        <div class="feed" id="ovFeed"><span class="hint">暂无请求</span></div>
+      </div>
+    </section>
 
-  <div class="sec">
-    <div class="toolbar"><h2>用量统计（近 7 天）</h2><button class="ghost" onclick="ui.refreshStats()">刷新</button></div>
-    <table id="statsTable"><thead><tr>
-      <th>供应商</th><th>模型</th><th class="num">请求</th><th class="num">失败</th>
-      <th class="num">输入 tokens</th><th class="num">输出 tokens</th><th class="num">估算费用</th>
-    </tr></thead><tbody></tbody></table>
-    <div class="empty" id="statsEmpty" style="display:none">暂无用量数据</div>
-  </div>
+    <section class="view" id="v-providers">
+      <div class="bar">
+        <h2>供应商</h2>
+        <button class="btn pri" onclick="ui.edit(null)">＋ 添加供应商</button>
+      </div>
+      <div class="grid" id="cards"></div>
+    </section>
 
-  <div class="sec">
-    <div class="toolbar"><h2>请求日志（最近 50 条）</h2><button class="ghost" onclick="ui.refreshLogs()">刷新</button></div>
-    <table id="logsTable"><thead><tr>
-      <th>时间</th><th>供应商</th><th>模型</th><th>状态</th><th class="num">耗时</th><th class="num">tokens</th><th>错误</th>
-    </tr></thead><tbody></tbody></table>
-    <div class="empty" id="logsEmpty" style="display:none">暂无请求日志</div>
+    <section class="view" id="v-routing">
+      <div class="bar">
+        <h2>模型路由</h2>
+        <button class="btn pri" onclick="ui.addRoute()">＋ 虚拟模型</button>
+      </div>
+      <div class="hint" style="margin-bottom:12px">
+        Copilot CLI 固定使用钉住名（COPILOT_MODEL），cops 按下表把虚拟模型名改写到真实供应商/模型；
+        ★ 为默认虚拟模型（钉住名指向它）；未命中和未知模型名走激活供应商默认模型。<b style="color:var(--cyan2)">所有修改即时保存</b>，无需保存按钮。
+      </div>
+      <div id="rtList"></div>
+      <div class="err" id="rtErr"></div>
+      <div class="g" id="utCard" style="margin-top:20px">
+        <h3>utility 辅助路由（可选）</h3>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <label style="display:flex;gap:7px;align-items:center;cursor:pointer;margin:0">
+            <input type="checkbox" id="uEnable" style="accent-color:var(--purple);width:16px;height:16px"> 启用</label>
+          <select id="uProvider" class="in"></select>
+          <input id="uModel" class="in mono" style="width:210px" placeholder="真实模型（如 glm-4-flash）" list="uModelList">
+          <input id="uCtx" class="in mono" style="width:110px" placeholder="上下文 128k" title="上下文窗口覆盖，留空回退真实模型配置">
+          <input id="uPatterns" class="in mono" style="flex:1;min-width:250px" placeholder="匹配模式（空格分隔），留空用默认 *nano* *-mini* *fast*">
+        </div>
+        <div class="hint" style="margin-top:8px">Copilot CLI 内部辅助调用（摘要/标题生成等）使用 gpt-5.4-nano 这类内部 id；命中模式时改写到上面的廉价快速模型。</div>
+      </div>
+    </section>
+
+    <section class="view" id="v-stats">
+      <div class="bar">
+        <h2>用量统计 · 近 7 天</h2>
+        <div class="seg" id="statSeg">
+          <button data-m="requests" class="on">请求数</button>
+          <button data-m="tokens">tokens</button>
+        </div>
+      </div>
+      <div class="split">
+        <div class="g"><h3>7 天趋势</h3><div class="chart" id="chTrend"><div class="empty">暂无数据</div></div></div>
+        <div class="g"><h3>供应商占比</h3><div id="chShare"><div class="empty">暂无数据</div></div></div>
+      </div>
+      <div class="g" style="padding:0;overflow:auto">
+        <table id="statsTable"><thead><tr>
+          <th>供应商</th><th>模型</th><th class="num">请求</th><th class="num">失败</th>
+          <th class="num">输入 tokens</th><th class="num">输出 tokens</th><th class="num">估算费用</th>
+        </tr></thead><tbody></tbody></table>
+        <div class="empty" id="statsEmpty" style="display:none;padding:18px">暂无用量数据</div>
+      </div>
+    </section>
+
+    <section class="view" id="v-logs">
+      <div class="bar">
+        <h2>请求日志</h2>
+        <div style="display:flex;gap:10px;align-items:center">
+          <select id="logF" class="in"><option value="">全部状态</option><option value="err">仅失败</option><option value="virtual">虚拟路由</option><option value="utility">辅助路由</option><option value="pinned">钉住</option><option value="passthrough">直通</option></select>
+          <input id="logQ" class="in mono" style="width:230px" placeholder="筛选：模型 / 供应商 / 错误">
+          <button class="btn mini" onclick="ui.refreshLogs()">刷新</button>
+        </div>
+      </div>
+      <div class="hint" style="margin-bottom:10px">点击行展开详情（路由命中、tokens、错误全文、请求体预览）。</div>
+      <div class="g" style="padding:0;overflow:auto">
+        <table id="logsTable"><thead><tr>
+          <th>时间</th><th>供应商</th><th>模型</th><th>路由</th><th>状态</th><th class="num">耗时</th><th class="num">tokens</th>
+        </tr></thead><tbody></tbody></table>
+        <div class="empty" id="logsEmpty" style="display:none;padding:18px">暂无请求日志</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="toasts"></div>
+
+<div class="ovl" id="dlgBg">
+  <div class="dlg">
+    <div class="dh"><h3 id="dlgTitle">添加供应商</h3><button class="x" onclick="ui.closeDlg()" title="关闭">✕</button></div>
+    <div class="db">
+      <label>名称（唯一 ID，如 glm / deepseek / openrouter）</label>
+      <input id="fName" class="in mono" placeholder="glm">
+      <label>Base URL（OpenAI 兼容根地址）</label>
+      <input id="fUrl" class="in mono" placeholder="https://open.bigmodel.cn/api/paas/v4">
+      <label>API Key（编辑时留空保持不变）</label>
+      <input id="fKey" type="password" class="in mono" placeholder="sk-...">
+      <label>默认模型（激活时改写请求中的 model）</label>
+      <input id="fModel" class="in mono" placeholder="glm-4.7" list="chipDl">
+      <label>模型清单（回车添加，退格删除标签）</label>
+      <div class="chipin" id="chipBox"><input id="chipIn" placeholder="输入模型名后回车，如 glm-4-flash"></div>
+      <datalist id="chipDl"></datalist>
+      <label>模型上下文（逐模型设置，支持 128k / 1.5m 简写）</label>
+      <div id="mcRows"></div>
+      <button class="btn mini" type="button" onclick="ui.addMcRow()">＋ 添加模型上下文</button>
+      <label>价格：每百万 tokens 输入 / 输出（可选，用于费用估算）</label>
+      <div class="frow">
+        <input id="fPriceIn" type="number" step="any" class="in" placeholder="输入单价">
+        <input id="fPriceOut" type="number" step="any" class="in" placeholder="输出单价">
+      </div>
+      <div class="err" id="dlgErr"></div>
+    </div>
+    <div class="df">
+      <button class="btn" onclick="ui.closeDlg()">取消</button>
+      <button class="btn pri" onclick="ui.saveProvider()">保存</button>
+    </div>
   </div>
 </div>
 
-<div class="dialog-bg" id="dlgBg">
-  <div class="dialog">
-    <h3 id="dlgTitle">添加供应商</h3>
-    <label>名称（唯一 ID，如 glm / deepseek / openrouter）</label>
-    <input id="fName" placeholder="glm">
-    <label>Base URL（OpenAI 兼容根地址）</label>
-    <input id="fUrl" placeholder="https://open.bigmodel.cn/api/paas/v4">
-    <label>API Key（留空且为编辑时保持不变）</label>
-    <input id="fKey" type="password" placeholder="sk-...">
-    <label>默认模型（激活时改写请求中的 model）</label>
-    <input id="fModel" placeholder="glm-4.7">
-    <label>模型清单（逗号分隔，用于 /v1/models 与下拉）</label>
-    <input id="fModels" placeholder="glm-4.7,glm-4-flash">
-    <label>价格：每百万 tokens 输入/输出（可选，用于费用估算）</label>
-    <div style="display:flex;gap:10px">
-      <input id="fPriceIn" type="number" step="any" placeholder="输入单价">
-      <input id="fPriceOut" type="number" step="any" placeholder="输出单价">
-    </div>
-    <div class="err" id="dlgErr"></div>
-    <div class="row">
-      <button class="ghost" onclick="ui.closeDlg()">取消</button>
-      <button onclick="ui.saveProvider()">保存</button>
-    </div>
-  </div>
-</div>
-
+<datalist id="uModelList"></datalist>
 <script>
+'use strict';
 const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtN = n => (n||0).toLocaleString('zh-CN');
 const cost = c => c ? '¥'+c.toFixed(4) : '—';
+const parseCtxTokens = s => {
+  s = String(s||'').trim().toLowerCase();
+  if (!s) return NaN;
+  let m = 1;
+  if (s.endsWith('k')) { m = 1e3; s = s.slice(0,-1); }
+  else if (s.endsWith('m')) { m = 1e6; s = s.slice(0,-1); }
+  if (!/^\d+(\.\d+)?$/.test(s)) return NaN;
+  const n = Math.round(parseFloat(s)*m);
+  return n > 0 ? n : NaN;
+};
+const fmtCtxTokens = n => {
+  n = n|0;
+  if (n <= 0) return '';
+  if (n >= 1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'m';
+  if (n >= 1e3) return (n/1e3).toFixed(1).replace(/\.0$/,'')+'k';
+  return String(n);
+};
+const ruleZh = r => ({utility:'辅助',virtual:'虚拟',pinned:'钉住',default:'默认',passthrough:'直通'}[r] || r || '—');
 
 const ui = {
-  providers: [], active: '',
+  providers: [], active: '', routing: {}, status: {}, logs: [],
+  tab: 'overview', statMode: 'requests', _rtTimer: null,
 
+  // ── 基础 ──────────────────────────────
   async init() {
-    await Promise.all([this.refreshStatus(), this.refreshProviders(), this.refreshStats(), this.refreshLogs()]);
+    window.addEventListener('hashchange', () => this.route());
+    this.route();
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && $('#dlgBg').classList.contains('show')) this.closeDlg();
+    });
+    $('#ovProv').addEventListener('click', e => {
+      const c = e.target.closest('.chip'); if (c) this.switchTo(c.dataset.sw);
+    });
+    $('#ovModel').addEventListener('click', e => {
+      const c = e.target.closest('.chip'); if (c) this.useModel(c.dataset.sw);
+    });
+    $('#statSeg').addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return;
+      this.statMode = b.dataset.m;
+      $$('#statSeg button').forEach(x => x.classList.toggle('on', x === b));
+      this.renderStats();
+    });
+    $('#logF').addEventListener('change', () => this.renderLogs());
+    $('#logQ').addEventListener('input', () => this.renderLogs());
+    try { await this.refreshAll(); } catch(e) { this.netState(false, e.message); }
+    setInterval(() => this.poll(), 15000);
+  },
+
+  route() {
+    const h = (location.hash || '#/overview').replace('#/','');
+    const t = ['overview','providers','routing','stats','logs'].includes(h) ? h : 'overview';
+    this.tab = t;
+    $$('#tabs .tab').forEach(a => a.classList.toggle('on', a.dataset.t === t));
+    $$('.view').forEach(v => v.classList.toggle('on', v.id === 'v-'+t));
+    if (t === 'overview') this.renderOverview();
+    if (t === 'stats') this.renderStats();
+    if (t === 'logs') this.renderLogs();
   },
 
   async api(path, opt) {
-    const r = await fetch('/_cops/api/'+path, opt);
-    const j = await r.json().catch(()=>({}));
-    if (!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    let r;
+    try {
+      r = await fetch('/_cops/api/'+path, opt);
+    } catch(e) { this.netState(false); throw e; }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { this.netState(true); throw new Error(j.error || ('HTTP '+r.status)); }
+    this.netState(true);
     return j;
   },
 
-  async refreshStatus() {
-    try {
-      const s = await this.api('status');
-      $('#ver').textContent = 'v'+s.version;
-      const env = s.copilotEnv||{};
-      const ap = s.activeProvider;
-      const inj = s.injected ? '<b style="color:var(--ok)">已注入</b>' : '<span style="color:var(--warn)">未注入</span>';
-      const auto = s.autostart ? '自启 ✅' : '自启 ❌';
-      $('#envInfo').innerHTML =
-        `当前激活：<b>${s.active? s.active : '<span style="color:var(--warn)">未设置</span>'}</b>` +
-        (ap? `（模型 ${ap.model||'—'}）` : '') +
-        ` &nbsp;·&nbsp; 监听 <code>${s.listen}</code> &nbsp;·&nbsp; 环境变量注入：${inj} &nbsp;·&nbsp; ${auto}<br>` +
-        `Copilot CLI 环境变量：<code>COPILOT_PROVIDER_TYPE=${env.COPILOT_PROVIDER_TYPE}</code> ` +
-        `<code>COPILOT_PROVIDER_BASE_URL=${env.COPILOT_PROVIDER_BASE_URL}</code> ` +
-        `<code>COPILOT_MODEL=${env.COPILOT_MODEL}</code><br>` +
-        `<span class="hint">切换供应商无需重启 Copilot CLI（base URL 不变，代理即时路由）。注入/恢复只影响新开终端。</span>`;
-    } catch(e) { $('#envInfo').textContent = '无法连接管理 API：'+e.message; }
+  netState(on, why) {
+    $('#net').classList.toggle('off', !on);
+    $('#netTx').textContent = on ? 'ONLINE' : 'OFFLINE';
+    if (!on && why) $('#netTx').textContent = 'OFFLINE · '+why;
   },
 
-  async refreshProviders() {
-    const j = await this.api('providers');
-    this.providers = j.providers||[]; this.active = j.active||'';
-    const box = $('#cards'); box.innerHTML = '';
-    if (!this.providers.length) {
-      box.innerHTML = '<div class="empty">还没有供应商，点击右上角「添加供应商」。</div>'; return;
-    }
-    for (const p of this.providers) {
-      const el = document.createElement('div');
-      el.className = 'card' + (p.name===this.active ? ' active':'');
-      el.innerHTML = `
-        ${p.name===this.active?'<span class="badge">● 使用中</span>':''}
-        <div class="name">${esc(p.name)}</div>
-        <div class="meta">${esc(p.baseUrl)}<br>模型：${esc(p.model||'—')} · Key：${esc(p.apiKey||'无')}<br>
-        清单：${esc((p.models||[]).join(', ')||'—')}</div>
-        <div class="actions">
-          <button ${p.name===this.active?'disabled':''} onclick="ui.switchTo('${esc(p.name)}')">启用</button>
-          <button class="ghost" onclick="ui.edit('${esc(p.name)}')">编辑</button>
-          <button class="danger" onclick="ui.remove('${esc(p.name)}')">删除</button>
-        </div>`;
-      box.appendChild(el);
-    }
+  toast(msg, kind) {
+    const d = document.createElement('div');
+    d.className = 'toast ' + (kind || '');
+    d.textContent = msg;
+    $('#toasts').appendChild(d);
+    setTimeout(() => { d.classList.add('out'); setTimeout(() => d.remove(), 260); }, 2800);
+  },
+
+  async poll() {
+    try { await Promise.all([this.refreshStatus(), this.refreshLogs()]); } catch(e) {}
+  },
+
+  async refreshAll() {
+    await this.refreshProviders();
+    await Promise.all([this.refreshStatus(), this.refreshRouting(), this.refreshStats(), this.refreshLogs()]);
+  },
+
+  async refreshStatus() {
+    let s;
+    try { s = await this.api('status'); } catch(e) { $('#ovStatus').textContent = '无法连接管理 API：'+e.message; return; }
+    this.status = s;
+    if (s.version) $('#ver').textContent = 'v'+s.version;
+    const env = s.copilotEnv || {};
+    const ap = s.activeProvider;
+    const dv = (this.routing && this.routing.defaultVirtual) || '';
+    const rtN = this.routing && this.routing.virtualModels ? Object.keys(this.routing.virtualModels).length : 0;
+    const inj = s.injected
+      ? '<span class="ok">● 已注入</span>'
+      : '<span class="warn">○ 未注入</span>';
+    const auto = s.autostart ? '<span class="ok">自启 ✓</span>' : '<span class="warn">自启 ✗</span>';
+    const code = (k) => `<code class="cp" data-cp="${esc(env[k]||'')}" title="点击复制">${esc(k)}=${esc(env[k]||'')}</code>`;
+    $('#ovStatus').innerHTML =
+      `<div class="statline">
+        <span>激活供应商 <b>${s.active ? esc(s.active) : '<span class="warn">未设置</span>'}</b>${ap && ap.model ? `（${esc(ap.model)}）` : ''}</span>
+        <span>钉住名 <b>${esc(s.virtualModel||'—')}</b></span>
+        <span>默认虚拟模型 <b>${esc(dv||'未设置')}</b></span>
+        <span>虚拟模型 <b class="num">${rtN}</b></span>
+        <span>监听 <b class="num">${esc(s.listen)}</b></span>
+        <span>环境注入 ${inj}</span><span>${auto}</span>
+      </div>
+      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
+        ${code('COPILOT_PROVIDER_TYPE')}${code('COPILOT_PROVIDER_BASE_URL')}${code('COPILOT_MODEL')}
+      </div>
+      <div class="hint" style="margin-top:8px">切换供应商/模型无需重启 Copilot CLI（base URL 不变，代理即时路由）。注入/恢复只影响新开终端。</div>`;
+    $$('#ovStatus .cp').forEach(c => c.addEventListener('click', () => {
+      navigator.clipboard && navigator.clipboard.writeText(c.dataset.cp).then(
+        () => this.toast('已复制：'+c.dataset.cp), () => {});
+    }));
+    if (this.tab === 'overview') this.renderOverview();
+  },
+
+  // ── 总览 ──────────────────────────────
+  renderOverview() {
+    const box = $('#ovProv');
+    box.innerHTML = this.providers.length
+      ? this.providers.map(p =>
+        `<div class="chip ${p.name===this.active?'on':''}" data-sw="${esc(p.name)}">⯑ ${esc(p.name)}</div>`).join('')
+      : '<span class="hint">还没有供应商 —— 去「供应商」页添加</span>';
+
+    const r = this.routing || {};
+    const vm = r.virtualModels || {};
+    // status 接口里 virtualModels 是名字数组，routing 接口里是详情 map，两者都要兼容
+    const names = Array.isArray(vm) ? vm.slice().sort() : Object.keys(vm).sort();
+    $('#ovModel').innerHTML = names.length
+      ? names.map(n => {
+          const t = (Array.isArray(vm) ? {} : vm[n]) || {};
+          const ctx = this.targetCtx(t);
+          return `<div class="chip cy ${n===r.defaultVirtual?'on':''}" data-sw="${esc(n)}">${esc(n)}${ctx?` <small>· ${esc(ctx)}</small>`:''}
+            <small style="display:block;font-size:10px;opacity:.7;margin-top:1px">${esc(t.provider)}/${esc(t.model)}</small></div>`;
+        }).join('')
+      : '<span class="hint">暂无虚拟模型 —— 去「路由」页配置</span>';
+  },
+
+  // targetCtx 计算虚拟模型生效上下文（覆盖 > 回退真实模型配置）。
+  targetCtx(t) {
+    if (!t) return '';
+    if (t.contextWindow > 0) return fmtCtxTokens(t.contextWindow);
+    const p = this.providers.find(x => x.name === t.provider);
+    const n = p && p.modelContext ? (p.modelContext[t.model] || 0) : 0;
+    return n > 0 ? fmtCtxTokens(n) : '';
   },
 
   async switchTo(name) {
-    try { await this.api('switch', {method:'POST', body:JSON.stringify({name})}); await this.refreshAll(); }
-    catch(e){ alert('切换失败：'+e.message); }
-  },
-
-  async remove(name) {
-    if (!confirm(`确定删除供应商「${name}」？`)) return;
-    try { await this.api('providers?name='+encodeURIComponent(name), {method:'DELETE'}); await this.refreshAll(); }
-    catch(e){ alert('删除失败：'+e.message); }
-  },
-
-  edit(name) {
-    const p = name ? this.providers.find(x=>x.name===name) : null;
-    $('#dlgTitle').textContent = p ? '编辑供应商 · '+p.name : '添加供应商';
-    $('#fName').value = p?p.name:''; $('#fName').disabled = !!p;
-    $('#fUrl').value = p?p.baseUrl:'';
-    $('#fKey').value = '';
-    $('#fKey').placeholder = p ? '留空保持不变（当前 '+p.apiKey+'）' : 'sk-...';
-    $('#fModel').value = p?(p.model||''):'';
-    $('#fModels').value = p?(p.models||[]).join(','):'';
-    const price = p && p.prices && p.prices[p.model];
-    $('#fPriceIn').value = price?price.inputPerMillionTokens:'';
-    $('#fPriceOut').value = price?price.outputPerMillionTokens:'';
-    $('#dlgErr').textContent = '';
-    $('#dlgBg').classList.add('show');
-  },
-
-  closeDlg(){ $('#dlgBg').classList.remove('show'); },
-
-  async saveProvider() {
-    const p = {
-      name: $('#fName').value.trim(), baseUrl: $('#fUrl').value.trim(),
-      apiKey: $('#fKey').value.trim(), model: $('#fModel').value.trim(),
-      models: $('#fModels').value.split(',').map(s=>s.trim()).filter(Boolean),
-    };
-    if (!p.name || !p.baseUrl) { $('#dlgErr').textContent = '名称与 Base URL 必填'; return; }
-    const pin = parseFloat($('#fPriceIn').value), pout = parseFloat($('#fPriceOut').value);
-    if (p.model && (pin>0 || pout>0)) {
-      p.prices = {[p.model]: {inputPerMillionTokens: pin||0, outputPerMillionTokens: pout||0, currency:'CNY'}};
-    }
     try {
-      await this.api('providers', {method:'POST', body:JSON.stringify(p)});
-      this.closeDlg(); await this.refreshAll();
-    } catch(e){ $('#dlgErr').textContent = e.message; }
+      await this.api('switch', {method:'POST', body:JSON.stringify({name})});
+      this.toast('已切换供应商 → '+name);
+      const c = $(`#ovProv .chip[data-sw="${CSS.escape(name)}"]`);
+      if (c) { c.classList.add('flash'); setTimeout(()=>c.classList.remove('flash'), 500); }
+      await this.refreshProviders(); await this.refreshStatus();
+    } catch(e) { this.toast('切换失败：'+e.message, 'err'); }
+  },
+
+  async useModel(name) {
+    try {
+      await this.api('routing/use', {method:'POST', body:JSON.stringify({name})});
+      this.toast('默认模型 → '+name);
+      const c = $(`#ovModel .chip[data-sw="${CSS.escape(name)}"]`);
+      if (c) { c.classList.add('flash'); setTimeout(()=>c.classList.remove('flash'), 500); }
+      await this.refreshRouting(); await this.refreshStatus();
+    } catch(e) { this.toast('切换失败：'+e.message, 'err'); }
+  },
+
+  // ── 数据刷新 ──────────────────────────
+  async refreshProviders() {
+    const j = await this.api('providers');
+    this.providers = j.providers || [];
+    this.active = j.active || '';
+    if (this.tab === 'providers') this.renderProviders();
+    if (this.tab === 'overview') this.renderOverview();
+  },
+
+  async refreshRouting() {
+    const j = await this.api('routing');
+    this.routing = j.routing || {};
+    if (this.tab === 'routing') this.renderRouting();
+    if (this.tab === 'overview') this.renderOverview();
   },
 
   async refreshStats() {
     try {
-      const j = await this.api('stats?days=7');
-      const tb = $('#statsTable tbody'); tb.innerHTML = '';
-      const rows = j.summary||[];
-      $('#statsEmpty').style.display = rows.length?'none':'block';
-      for (const r of rows) {
-        tb.insertAdjacentHTML('beforeend',
-          `<tr><td>${esc(r.provider)}</td><td>${esc(r.model||'—')}</td>`+
-          `<td class="num">${fmtN(r.requests)}</td><td class="num">${fmtN(r.errors)}</td>`+
-          `<td class="num">${fmtN(r.inputTokens)}</td><td class="num">${fmtN(r.outputTokens)}</td>`+
-          `<td class="num">${cost(r.cost)}</td></tr>`);
-      }
-    } catch(e){ console.error(e); }
+      this.stats = await this.api('stats?days=7');
+      if (this.tab === 'stats') this.renderStats();
+    } catch(e) { console.error(e); }
   },
 
   async refreshLogs() {
     try {
       const j = await this.api('logs?limit=50');
-      const tb = $('#logsTable tbody'); tb.innerHTML = '';
-      const es = j.entries||[];
-      $('#logsEmpty').style.display = es.length?'none':'block';
-      for (const e of es.slice().reverse()) {
-        const toks = e.promptTokens||e.completionTokens ? `${fmtN(e.promptTokens)}/${fmtN(e.completionTokens)}` : '—';
-        tb.insertAdjacentHTML('beforeend',
-          `<tr class="${e.error?'log-err':''}"><td>${esc(e.time)}</td><td>${esc(e.provider||'—')}</td>`+
-          `<td>${esc(e.model||'—')}</td><td>${e.status||'—'}</td><td class="num">${fmtN(e.durationMs)}ms</td>`+
-          `<td class="num">${toks}</td><td title="${esc(e.error||'')}">${esc((e.error||'').slice(0,60))}</td></tr>`);
-      }
-    } catch(e){ console.error(e); }
+      this.logs = j.entries || [];
+      if (this.tab === 'logs') this.renderLogs();
+      this.renderFeed();
+    } catch(e) { console.error(e); }
   },
 
-  async refreshAll(){ await Promise.all([this.refreshStatus(), this.refreshProviders(), this.refreshStats(), this.refreshLogs()]); }
+  renderFeed() {
+    const es = this.logs.slice(-8).reverse();
+    $('#ovFeed').innerHTML = es.length ? es.map(e => {
+      const st = e.error || e.status >= 400 ? 'bad' : '';
+      return `<div class="row">
+        <span class="t">${esc((e.time||'').slice(11))}</span>
+        <span class="m">${esc(e.virtualModel || e.model || '—')}</span>
+        <span class="r">${ruleZh(e.routeRule)}</span>
+        <span class="s ${st}">${e.status||'—'}</span>
+        <span class="t">${fmtN(e.durationMs)}ms</span>
+      </div>`;
+    }).join('') : '<span class="hint">暂无请求</span>';
+  },
+
+  // ── 供应商屏 ──────────────────────────
+  renderProviders() {
+    const box = $('#cards');
+    box.innerHTML = '';
+    if (!this.providers.length) {
+      box.innerHTML = '<div class="empty" style="grid-column:1/-1">还没有供应商，点击右上角「添加供应商」。</div>';
+      return;
+    }
+    for (const p of this.providers) {
+      const el = document.createElement('div');
+      el.className = 'pcard' + (p.name === this.active ? ' on' : '');
+      const dctx = p.modelContext && p.modelContext[p.model] ? ' · 上下文 '+fmtCtxTokens(p.modelContext[p.model]) : '';
+      el.innerHTML = `
+        ${p.name === this.active ? '<span class="badge">⯑ 使用中</span>' : ''}
+        <div class="name">${esc(p.name)}</div>
+        <div class="meta">
+          ${esc(p.baseUrl)}<br>
+          模型 <b>${esc(p.model||'—')}</b>${dctx} · Key ${esc(p.apiKey||'无')}<br>
+          清单 ${(p.models||[]).length} 个${(p.models||[]).length?': '+esc(p.models.join(', ')):''}
+        </div>
+        <div class="acts">
+          <button class="btn mini pri" ${p.name===this.active?'disabled style="opacity:.4;cursor:not-allowed"':''} data-act="sw" data-n="${esc(p.name)}">启用</button>
+          <button class="btn mini" data-act="ed" data-n="${esc(p.name)}">编辑</button>
+          <button class="btn mini dan" data-act="del" data-n="${esc(p.name)}">删除</button>
+        </div>`;
+      box.appendChild(el);
+    }
+  },
+
+  // ── 供应商弹窗 ────────────────────────
+  _dlgSnap: '',
+
+  edit(name) {
+    const p = name ? this.providers.find(x => x.name === name) : null;
+    $('#dlgTitle').textContent = p ? '编辑供应商 · '+p.name : '添加供应商';
+    $('#fName').value = p ? p.name : '';
+    $('#fName').disabled = !!p;
+    $('#fUrl').value = p ? p.baseUrl : '';
+    $('#fKey').value = '';
+    $('#fKey').placeholder = p ? '留空保持不变（当前 '+p.apiKey+'）' : 'sk-...';
+    $('#fModel').value = p ? (p.model||'') : '';
+    $('#chipBox').querySelectorAll('.tag').forEach(t => t.remove());
+    $('#chipIn').value = '';
+    for (const m of (p ? p.models||[] : [])) this.addChip(m);
+    $('#mcRows').innerHTML = '';
+    const mc = p && p.modelContext ? Object.entries(p.modelContext) : [];
+    for (const [m, v] of mc) this.addMcRow(m, fmtCtxTokens(v));
+    const price = p && p.prices && p.prices[p.model];
+    $('#fPriceIn').value = price ? price.inputPerMillionTokens : '';
+    $('#fPriceOut').value = price ? price.outputPerMillionTokens : '';
+    $('#dlgErr').textContent = '';
+    this.syncDatalists();
+    $('#dlgBg').classList.add('show');
+    this._dlgSnap = JSON.stringify(this.collectDlg());
+    setTimeout(() => (p ? $('#fUrl') : $('#fName')).focus(), 60);
+  },
+
+  closeDlg(force) {
+    if (!$('#dlgBg').classList.contains('show')) return;
+    if (!force && JSON.stringify(this.collectDlg()) !== this._dlgSnap) {
+      if (!confirm('弹窗内有未保存的修改，确定放弃？')) return;
+    }
+    $('#dlgBg').classList.remove('show');
+  },
+
+  collectDlg() {
+    return {
+      name: $('#fName').value.trim(), url: $('#fUrl').value.trim(),
+      key: $('#fKey').value, model: $('#fModel').value.trim(),
+      chips: this.chipsGet(), mc: [...$('#mcRows').querySelectorAll('.mcr')].map(r => ({
+        m: r.querySelector('.mc-m').value.trim(), c: r.querySelector('.mc-c').value.trim(),
+      })),
+      pin: $('#fPriceIn').value, pout: $('#fPriceOut').value,
+    };
+  },
+
+  chipsGet() { return [...$('#chipBox').querySelectorAll('.tag')].map(t => t.dataset.v); },
+
+  addChip(v) {
+    v = String(v||'').trim();
+    if (!v || this.chipsGet().includes(v)) return;
+    const s = document.createElement('span');
+    s.className = 'tag'; s.dataset.v = v;
+    s.innerHTML = esc(v) + '<i title="移除">✕</i>';
+    s.querySelector('i').addEventListener('click', () => { s.remove(); this.syncDatalists(); });
+    $('#chipBox').insertBefore(s, $('#chipIn'));
+    this.syncDatalists();
+  },
+
+  addMcRow(model, ctx) {
+    const row = document.createElement('div');
+    row.className = 'mcr';
+    row.innerHTML = `
+      <input class="in mono mc-m" placeholder="模型名（如 glm-4.7）" list="chipDl" value="${esc(model||'')}">
+      <input class="in mono mc-c" placeholder="128k / 1.5m" title="支持 128k、1.5m 简写" value="${esc(ctx||'')}">
+      <button type="button" title="删除该行">✕</button>`;
+    row.querySelector('button').addEventListener('click', () => row.remove());
+    $('#mcRows').appendChild(row);
+  },
+
+  syncDatalists() {
+    const opts = this.chipsGet().map(v => `<option value="${esc(v)}">`).join('');
+    $('#chipDl').innerHTML = opts;
+    $('#uModelList').innerHTML = opts;
+  },
+
+  async saveProvider() {
+    const d = this.collectDlg();
+    if (!d.name || !d.url) { $('#dlgErr').textContent = '名称与 Base URL 必填'; return; }
+    const p = {
+      name: d.name, baseUrl: d.url, apiKey: d.key.trim(), model: d.model,
+      models: d.chips,
+    };
+    if (d.mc.length) {
+      const mc = {};
+      for (const r of d.mc) {
+        if (!r.m && !r.c) continue;
+        const v = parseCtxTokens(r.c);
+        if (!r.m || isNaN(v)) {
+          $('#dlgErr').textContent = `模型上下文不合法：「${r.m||'？'}: ${r.c||'？'}」（窗口支持 128k、1.5m 简写）`;
+          return;
+        }
+        mc[r.m] = v;
+      }
+      if (Object.keys(mc).length) p.modelContext = mc;
+    }
+    const pin = parseFloat(d.pin), pout = parseFloat(d.pout);
+    if (p.model && (pin > 0 || pout > 0)) {
+      p.prices = {[p.model]: {inputPerMillionTokens: pin||0, outputPerMillionTokens: pout||0, currency:'CNY'}};
+    }
+    try {
+      await this.api('providers', {method:'POST', body:JSON.stringify(p)});
+      this.closeDlg(true);
+      this.toast('供应商已保存：'+p.name);
+      await this.refreshAll();
+    } catch(e) { $('#dlgErr').textContent = e.message; }
+  },
+
+  // ── 路由屏（交互即存）─────────────────
+  renderRouting() {
+    const r = this.routing || {};
+    const vm = r.virtualModels || {};
+    const list = $('#rtList');
+    list.innerHTML = '';
+    const names = Object.keys(vm).sort();
+    if (!names.length) {
+      list.innerHTML = '<div class="hint">暂无虚拟模型，点「+ 添加虚拟模型」。</div>';
+    }
+    for (const n of names) this.addRtCard(n, vm[n]);
+
+    const u = r.utility;
+    $('#uEnable').checked = !!u;
+    $('#utCard').classList.toggle('off', !u);
+    $('#uProvider').innerHTML = this.providers.map(p =>
+      `<option ${u&&u.provider===p.name?'selected':''} value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    this.fillModels('#uModel', u ? u.model : '');
+    $('#uCtx').value = u && u.contextWindow ? fmtCtxTokens(u.contextWindow) : '';
+    $('#uPatterns').value = (r.utilityPatterns||[]).join(' ');
+    $('#rtErr').textContent = '';
+  },
+
+  fillModels(sel, val) {
+    const el = $(sel);
+    const prov = sel === '#uModel' ? $('#uProvider').value : '';
+    const p = this.providers.find(x => x.name === prov);
+    const models = p ? (p.models||[]) : [];
+    el.innerHTML = models.map(m => `<option ${m===val?'selected':''} value="${esc(m)}">${esc(m)}</option>`).join('');
+    if (val && !models.includes(val)) el.insertAdjacentHTML('beforeend', `<option selected value="${esc(val)}">${esc(val)}（不在清单）</option>`);
+  },
+
+  addRtCard(name, t) {
+    t = t || {};
+    const card = document.createElement('div');
+    card.className = 'rt';
+    card.dataset.v = name || '';
+    const isDef = this.routing && this.routing.defaultVirtual === name;
+    if (isDef) card.classList.add('isdef');
+    card.innerHTML = `
+      <button class="star${isDef?' on':''}" title="设为默认虚拟模型">${isDef ? '★' : '☆'}</button>
+      <input class="in mono rt-n" placeholder="虚拟名（如 cops-flash）" value="${esc(name||'')}">
+      <select class="in rt-p">${this.providers.map(p=>`<option ${t.provider===p.name?'selected':''} value="${esc(p.name)}">${esc(p.name)}</option>`).join('')}</select>
+      <input class="in mono rt-m" placeholder="真实模型 ID" list="uModelList" value="${esc(t.model||'')}">
+      <input class="in mono rt-c" placeholder="覆盖上下文（可空）" title="如 128k、1.5m；留空回退该模型配置" value="${t.contextWindow?fmtCtxTokens(t.contextWindow):''}">
+      <button class="del" title="删除该虚拟模型">✕</button>`;
+    $('#rtList').appendChild(card);
+  },
+
+  addRoute() {
+    this.addRtCard('', {});
+    const cards = $$('#rtList .rt');
+    cards[cards.length-1].querySelector('.rt-n').focus();
+  },
+
+  collectRouting() {
+    const virtualModels = {};
+    for (const c of $$('#rtList .rt')) {
+      const n = c.querySelector('.rt-n').value.trim();
+      const p = c.querySelector('.rt-p').value;
+      const m = c.querySelector('.rt-m').value.trim();
+      const cs = c.querySelector('.rt-c').value.trim();
+      if (!n && !m && !cs) continue; // 整行空白忽略
+      if (!n) return {err: '虚拟名不能为空'};
+      if (virtualModels[n]) return {err: `虚拟名重复：「${n}」`};
+      const t = {provider: p, model: m};
+      if (cs) {
+        const v = parseCtxTokens(cs);
+        if (isNaN(v)) return {err: `「${n}」的覆盖上下文不合法：${cs}（支持 128k、1.5m 简写）`};
+        t.contextWindow = v;
+      }
+      virtualModels[n] = t;
+    }
+    let def = null;
+    for (const c of $$('#rtList .rt'))
+      if (c.classList.contains('isdef')) def = c.querySelector('.rt-n').value.trim();
+    if (def == null && Object.keys(virtualModels).length) return {err: '必须保留一个默认虚拟模型（点 ★ 设定）'};
+    if (def != null && !virtualModels[def]) return {err: `默认虚拟模型「${def}」不存在（名字改动后请同步 ★）`};
+
+    const routing = {virtualModels, defaultVirtual: def || ''};
+    if ($('#uEnable').checked) {
+      const ctx = parseCtxTokens($('#uCtx').value.trim());
+      if ($('#uCtx').value.trim() && isNaN(ctx)) return {err: '辅助模型上下文不合法：'+$('#uCtx').value};
+      routing.utility = {
+        provider: $('#uProvider').value,
+        model: $('#uModel').value,
+        ...(ctx > 0 ? {contextWindow: ctx} : {}),
+      };
+    }
+    const pats = $('#uPatterns').value.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+    if (pats.length) routing.utilityPatterns = pats;
+    return {routing};
+  },
+
+  rtChanged(card) {
+    $('#rtErr').textContent = '';
+    clearTimeout(this._rtTimer);
+    this._rtTimer = setTimeout(async () => {
+      const {routing, err} = this.collectRouting();
+      if (err) { $('#rtErr').textContent = '✕ '+err; return; }
+      try {
+        await this.api('routing', {method:'PUT', body:JSON.stringify({routing})});
+        this.routing = routing;
+        if (card) { card.classList.add('flash'); setTimeout(()=>card.classList.remove('flash'), 450); }
+      } catch(e) {
+        this.toast('保存失败，已回滚：'+e.message, 'err');
+        await this.refreshRouting(); // 回滚到服务端状态
+      }
+    }, 400);
+  },
+
+  // ── 统计屏 ────────────────────────────
+  renderStats() {
+    const st = this.stats;
+    if (!st || !st.rows || !st.rows.length) {
+      $('#chTrend').innerHTML = '<div class="empty">暂无数据</div>';
+      $('#chShare').innerHTML = '<div class="empty">暂无数据</div>';
+      $('#statsTable').querySelector('tbody').innerHTML = '';
+      $('#statsEmpty').style.display = '';
+      return;
+    }
+    $('#statsEmpty').style.display = 'none';
+    const rows = st.rows;
+    const mode = this.statMode;
+    const val = r => mode === 'requests' ? r.requests : (r.inputTokens + r.outputTokens);
+    const fmtV = v => mode === 'requests' ? fmtN(v) : (v >= 1e6 ? (v/1e6).toFixed(1)+'m' : (v/1e3).toFixed(0)+'k');
+
+    // 按天聚合（近 7 天窗口，含零值日）
+    const days = [];
+    const byDate = {};
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i*864e5);
+      const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      days.push(k); byDate[k] = 0;
+    }
+    for (const r of rows) if (r.date in byDate) byDate[r.date] += val(r);
+    this.renderTrend(days, days.map(d => byDate[d]), fmtV);
+
+    // 供应商占比
+    const byProv = {};
+    for (const r of rows) {
+      const p = byProv[r.provider || '未知'] = byProv[r.provider || '未知'] || {req:0, tok:0, cost:0, err:0};
+      p.req += r.requests; p.tok += r.inputTokens + r.outputTokens; p.cost += r.cost; p.err += r.errors;
+    }
+    const totV = Object.values(byProv).reduce((s,p) => s + (mode==='requests'?p.req:p.tok), 0) || 1;
+    const palette = ['#7c4dff','#00e5ff','#ff3d81','#ffd54f','#69f0ae','#b388ff'];
+    $('#chShare').innerHTML = Object.entries(byProv).sort((a,b) => (mode==='requests'?b[1].req-a[1].req:b[1].tok-a[1].tok)).map(([n,p],i) => {
+      const v = mode==='requests' ? p.req : p.tok;
+      const pc = Math.max(1, Math.round(v/totV*100));
+      return `<div class="hbar">
+        <div class="cap"><span>${esc(n)}${p.err?` <small class="warn">${fmtN(p.err)} 错误</small>`:''}</span><b>${fmtV(v)} · ${pc}% · ¥${p.cost.toFixed(2)}</b></div>
+        <div class="track"><i class="fill" style="width:${pc}%;background:${palette[i%palette.length]}"></i></div>
+      </div>`;
+    }).join('');
+
+    // 按模型明细
+    const byModel = {};
+    for (const r of rows) {
+      const k = (r.provider||'未知')+' / '+(r.model||'—');
+      const m = byModel[k] = byModel[k] || {req:0, in:0, out:0, cost:0, err:0};
+      m.req += r.requests; m.in += r.inputTokens; m.out += r.outputTokens; m.cost += r.cost; m.err += r.errors;
+    }
+    $('#statsTable').querySelector('tbody').innerHTML =
+      Object.entries(byModel).map(([k,m]) => {
+        const [prov, ...rest] = k.split(' / ');
+        return `<tr><td>${esc(prov)}</td><td class="mono">${esc(rest.join(' / '))}</td>
+         <td class="num">${fmtN(m.req)}</td><td class="num">${m.err?`<span class="warn">${fmtN(m.err)}</span>`:'0'}</td>
+         <td class="num">${fmtN(m.in)}</td><td class="num">${fmtN(m.out)}</td><td class="num">${cost(m.cost)}</td></tr>`;
+      }).join('');
+  },
+
+  renderTrend(days, vals, fmtV) {
+    const W = 640, H = 200, bw = 56, gap = (W - 40 - bw*7) / 6, x0 = 20, base = 156;
+    const max = Math.max(...vals, 1);
+    const bars = vals.map((v,i) => {
+      const h = Math.max(v > 0 ? 6 : 2, Math.round(v/max*128));
+      const x = x0 + i*(bw+gap), y = base - h;
+      return `<g><title>${days[i]} · ${esc(fmtV(v))}</title>
+        <rect class="bar" x="${x}" y="${y}" width="${bw}" height="${h}" rx="3" opacity="${v>0?1:.18}"/>
+        ${v>0?`<text class="yl" x="${x+bw/2}" y="${y-6}" text-anchor="middle">${esc(fmtV(v))}</text>`:''}
+        <text class="xl" x="${x+bw/2}" y="${base+16}" text-anchor="middle">${days[i].slice(5)}</text></g>`;
+    }).join('');
+    const grid = [0.25,0.5,0.75,1].map(p =>
+      `<line class="axis" x1="${x0}" x2="${W-20}" y1="${base-128*p}" y2="${base-128*p}"/>`).join('');
+    $('#chTrend').innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block">
+        <defs><linearGradient id="gradPC" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#00e5ff"/><stop offset="1" stop-color="#7c4dff"/>
+        </linearGradient></defs>
+        ${grid}<line class="axis" x1="${x0}" x2="${W-20}" y1="${base}" y2="${base}"/>
+        ${bars}
+      </svg>`;
+  },
+
+  // ── 日志屏 ────────────────────────────
+  async refreshLogs() {
+    await this.refreshLogsData();
+  },
+
+  async refreshLogsData() {
+    const j = await this.api('logs?limit=50');
+    this.logs = j.entries || [];
+    this.renderLogs(); this.renderFeed();
+  },
+
+  renderLogs() {
+    const f = $('#logF').value, q = $('#logQ').value.trim().toLowerCase();
+    let es = this.logs;
+    if (f === 'err') es = es.filter(e => e.error || e.status >= 400);
+    else if (f && f !== 'all') es = es.filter(e => e.routeRule === f);
+    if (q) es = es.filter(e => ((e.model||'')+' '+(e.virtualModel||'')+' '+(e.path||'')).toLowerCase().includes(q));
+    const tb = $('#logsTable');
+    if (!es.length) { tb.querySelector('tbody').innerHTML = ''; $('#logsEmpty').style.display = ''; return; }
+    $('#logsEmpty').style.display = 'none';
+    tb.querySelector('tbody').innerHTML =
+      es.map((e,i) => {
+        const bad = e.error || e.status >= 400;
+        return `<tr class="clickable ${bad?'lerr':''}" data-i="${i}">
+          <td class="t"><span class="chev">▸</span> ${esc((e.time||'').slice(11))}</td>
+          <td>${esc(e.provider || '—')}</td>
+          <td class="mono">${esc(e.virtualModel || e.model || '—')}</td>
+          <td>${ruleZh(e.routeRule)}</td>
+          <td class="s">${e.status||'—'}</td>
+          <td class="t">${fmtN(e.durationMs)}ms</td>
+          <td class="num t">${e.promptTokens||e.completionTokens ? fmtN(e.promptTokens)+'→'+fmtN(e.completionTokens) : '—'}</td></tr>
+        <tr class="det" data-d="${i}" style="display:none"><td colspan="7"></td></tr>`;
+      }).join('');
+  },
+
+  toggleLog(i, tr) {
+    const det = document.querySelector(`tr.det[data-d="${CSS.escape(String(i))}"]`);
+    if (!det) return;
+    if (det.style.display !== 'none') { det.style.display = 'none'; tr.querySelector('.chev').textContent = '▸'; return; }
+    const e = this.logs[i]; if (!e) return;
+    const kv = [
+      ['时间', e.time], ['供应商', e.provider], ['请求模型名', e.virtualModel || '—'],
+      ['真实模型', e.model || '—'], ['路由规则', ruleZh(e.routeRule)], ['方法/路径', (e.method||'')+' '+(e.path||'')],
+      ['状态', e.status + (e.error ? ' · '+e.error : '')], ['耗时', fmtN(e.durationMs)+'ms'],
+      ['流式', e.stream ? '是' : '否'],
+      ['tokens', e.promptTokens||e.completionTokens ? `${fmtN(e.promptTokens)} → ${fmtN(e.completionTokens)}` : '—'],
+    ];
+    det.querySelector('td').innerHTML =
+      `<div class="kv">` + kv.map(([k,v]) => `<b>${esc(k)}</b><span>${esc(v)}</span>`).join('') + `</div>` +
+      (e.requestBody ? `<div class="hint" style="margin:8px 0 4px">请求体预览</div><pre class="body">${esc(this.prettyJson(e.requestBody))}</pre>` : '');
+    det.style.display = '';
+    tr.querySelector('.chev').textContent = '▾';
+  },
+
+  prettyJson(s) {
+    try { return JSON.stringify(JSON.parse(s), null, 2).slice(0, 4000); } catch(_) { return s.slice(0, 4000); }
+  },
 };
 
-function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// ── 事件装配 ──────────────────────────
+$('#cards').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act]'); if (!b) return;
+  const n = b.dataset.n;
+  if (b.dataset.act === 'sw') ui.switchTo(n);
+  else if (b.dataset.act === 'ed') ui.edit(n);
+  else if (b.dataset.act === 'del' && confirm(`删除供应商「${n}」？此操作不可撤销。`)) {
+    ui.api('providers?name='+encodeURIComponent(n), {method:'DELETE'})
+      .then(() => { ui.toast('已删除 '+n); return ui.refreshAll(); })
+      .catch(err => ui.toast('删除失败：'+err.message, 'err'));
+  }
+});
 
-$('#dlgBg').addEventListener('click', e => { if (e.target.id==='dlgBg') ui.closeDlg(); });
+$('#v-routing').addEventListener('change', e => {
+  if (e.target.id === 'uProvider') { ui.fillModels('#uModel'); }
+  if (e.target.id === 'uEnable') $('#utCard').classList.toggle('off', !e.target.checked);
+  ui.rtChanged(e.target.closest('.rt'));
+});
+$('#v-routing').addEventListener('click', e => {
+  const card = e.target.closest('.rt'); if (!card) return;
+  if (e.target.closest('.star')) {
+    $$('#rtList .rt').forEach(c => { c.classList.remove('isdef'); const s = c.querySelector('.star'); s.classList.remove('on'); s.textContent = '☆'; });
+    card.classList.add('isdef');
+    const s = card.querySelector('.star'); s.classList.add('on'); s.textContent = '★';
+    ui.rtChanged(card);
+  } else if (e.target.closest('.del')) {
+    card.remove(); ui.rtChanged();
+  }
+});
+
+$('#logsTable').addEventListener('click', e => {
+  const tr = e.target.closest('tr.clickable'); if (tr) ui.toggleLog(tr.dataset.i, tr);
+});
+
+const ci = $('#chipIn');
+ci.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ',' || e.key === ';') { e.preventDefault(); ui.addChip(ci.value); ci.value = ''; }
+  else if (e.key === 'Backspace' && !ci.value) {
+    const tags = $('#chipBox').querySelectorAll('.tag');
+    if (tags.length) { tags[tags.length-1].remove(); ui.syncDatalists(); }
+  }
+});
+ci.addEventListener('blur', () => { if (ci.value.trim()) { ui.addChip(ci.value); ci.value = ''; } });
+$('#fModel').addEventListener('change', () => ui.syncDatalists());
+
 ui.init();
 </script>
+
 </body>
 </html>

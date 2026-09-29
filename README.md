@@ -18,9 +18,11 @@ Copilot CLI ──固定指向──▶ cops 代理(127.0.0.1:8317/v1) ──路
 | ⚡ 即时切换 | `cops switch` 只改代理路由，base URL 不变，**无需重启 Copilot CLI** |
 | 🔑 密钥不落 shell | 真实 API Key 只存在 `~/.cops/config.json`，环境变量里是占位符 |
 | 🔀 模型改写 | 请求体中的 `model` 自动改写为激活供应商的模型，CLI 侧配置一次到位 |
+| 🧭 多模型路由 | 虚拟模型表 + utility 识别：重活走 pro、辅助调用走 flash；`cops model use` / 托盘 / Web 管理页一键切默认，无需重启会话 |
+| 📏 上下文窗口 | 真实模型级/虚拟模型级两级配置（`128k` 简写），`/v1/models` 输出 `context_length` 供其他 OpenAI 客户端读取 |
 | 📊 用量统计 | 按供应商/模型/日聚合 token 与估算费用（含 SSE 流式 usage 捕获） |
 | 📝 请求日志 | JSONL 明细 + 大小轮转 + 保留天数，`cops logs` / Web 页可查 |
-| 🖥️ Web 管理页 | 内置于代理（`/_cops/`），供应商增删改查、一键启用 |
+| 🖥️ Web 管理页 | 内置于代理（`/_cops/`）：一键切换供应商/模型、路由可视化编辑（即时保存）、用量图表、请求日志 |
 
 ## 安装
 
@@ -44,12 +46,17 @@ cops add ollama --url http://localhost:11434/v1 --model qwen3:32b
 cops install
 
 # 3. 启动托盘（本机即刻生效；开机自启已设置）
-cops tray
+cops tray        # 也可直接运行裸 cops（无参数）或双击 cops.exe，等价于 cops tray
 
 # 4. 打开新的终端（必须新开！），运行 copilot 即走 glm
 # 5. 随时切换 —— 托盘菜单点一下，或命令行，均无需重启 copilot
 cops switch deepseek
 cops switch glm --model glm-4-flash
+
+# 6. 多模型分工（可选）：虚拟模型路由，同一供应商也能 pro/flash 分身
+cops model add cops-pro --provider glm --model glm-4.7
+cops model add cops-flash --provider glm --model glm-4-flash
+cops model use cops-pro      # 切默认虚拟模型，即时生效（环境变量不动）
 
 # 诊断 / 管理
 cops doctor        # 体检：配置、守护进程、注入状态、自启、上游连通
@@ -61,12 +68,12 @@ cops uninstall     # 恢复环境变量 + 清理自启（配置保留）
 
 ## 托盘模式（推荐常驻方式）
 
-`cops tray` = 托盘 UI + 代理守护进程，单进程：
+`cops tray` = 托盘 UI + 代理守护进程，单进程。**裸 `cops`（无参数）与双击 `cops.exe` 等价于 `cops tray`**（双击检测到控制台仅本进程时自动重启为无控制台的分离进程，黑窗一闪即关、不留残留；在终端中运行则保持原行为，`cops --console` 可保留控制台调试）：
 
 - **启动即注入**：自动写入 4 个 `COPILOT_*` 用户环境变量指向本地代理；
   注入前原值备份到 `~/.cops/env-backup.json`（二次启动不覆盖最早备份）
 - **退出即恢复**：托盘菜单「退出（恢复环境变量并停止代理）」—— 原值还原、代理关停，"停止即还原"
-- **托盘菜单**：供应商列表一键切换（勾选=当前）、打开管理页、停用/启用注入
+- **托盘菜单**：模型（虚拟名单选，v0.2）、供应商一键切换（勾选=当前）、打开管理页、停用/启用注入
 - **附着模式**：若检测到已有守护进程（如 `cops serve`）在运行，托盘仅作 UI；
   退出时通过管理 API 停掉该守护进程，语义不变
 - **崩溃自愈**：托盘被强杀后注入状态保留（备份文件在），`cops restore` 或下次启动可正确恢复
@@ -79,14 +86,19 @@ cops uninstall     # 恢复环境变量 + 清理自启（配置保留）
 
 | 命令 | 说明 |
 |---|---|
+| `cops` / `cops.exe 双击` | 无参数默认进托盘（= `cops tray`，双击直启守护进程） |
 | `cops tray [--console]` | 托盘常驻（推荐）：启动注入 / 退出恢复 / 菜单切换 |
 | `cops serve [--headless]` | 前台守护进程（无托盘） |
 | `cops install [--model X]` | 注入 4 个 `COPILOT_*`（带备份）+ HKCU Run 自启（cops tray） |
 | `cops uninstall` | 恢复环境变量 + 清自启（保留 `~/.cops/` 数据） |
 | `cops inject` / `cops restore` | 手动注入 / 恢复环境变量（托盘崩溃后兜底） |
-| `cops add [名称] --url --key --model [--models] [--price-in --price-out]` | 添加供应商 |
+| `cops add [名称] --url --key --model [--models] [--price-in --price-out] [--context 128k]` | 添加供应商（--context 为默认模型上下文） |
 | `cops list` / `cops current` | 列出供应商 / 查看当前激活 |
 | `cops switch <名称> [--model X]` | 一键切换（守护进程运行中时即时生效） |
+| `cops model list` | 列出虚拟模型路由与 utility 配置 |
+| `cops model add <虚拟名> --provider <供应商> --model <真实模型> [--context 128k]` | 添加虚拟模型（第一个自动成为默认；--context 覆盖上下文，留空回退真实模型值） |
+| `cops model remove <虚拟名>` | 删除虚拟模型（默认自动回退） |
+| `cops model use <虚拟名>` | 切换默认虚拟模型（即时生效，无需重启会话） |
 | `cops remove <名称>` | 删除供应商 |
 | `cops test [名称]` | 上游连通性测试 |
 | `cops stats [--days N]` | 用量费用统计 |
@@ -102,13 +114,30 @@ cops uninstall     # 恢复环境变量 + 清理自启（配置保留）
    - `COPILOT_PROVIDER_API_KEY=cops-local`（占位符，真实 Key 由代理注入）
    - `COPILOT_MODEL=cops-active`（虚拟模型名，由代理改写为真实模型）
 2. Copilot CLI（BYOK 模式，OpenAI wire）将请求发往 `/v1/chat/completions` 等端点；
-3. 代理按当前激活供应商：
-   - 剥离路径 `/v1` 前缀后拼接到供应商 BaseURL（OpenAI SDK 约定）；
+3. 代理按路由目标转发：
+   - 剥离路径 `/v1` 前缀后拼接到**目标供应商** BaseURL（OpenAI SDK 约定）；
    - 注入真实 `Authorization: Bearer <Key>` 与自定义头；
-   - 将请求体 `model` 改写为该供应商的模型（可用 `passthroughModel` 关闭）；
+   - 按四级路由解析请求体 `model`（见下节「模型路由」）；
    - 流式请求自动注入 `stream_options.include_usage` 以捕获用量；
    - SSE 逐块透传并即时刷新，同时扫描末尾 usage chunk；
-4. `cops switch` 通过管理 API 热更新内存配置 —— 代理端点不变，CLI 无感知。
+4. `cops switch` / `cops model use` 通过管理 API 热更新内存配置 —— 代理端点不变，CLI 无感知。
+
+### 模型路由（v0.2）
+
+个人 BYOK 下 Copilot CLI 的 `/model` 不可用（会话被钉死在单一 `COPILOT_MODEL`），
+cops 因此在代理侧做**确定性多模型路由**，按请求体 `model` 字段四级解析：
+
+| 优先级 | 规则 | 命中条件与去向 |
+|---|---|---|
+| 1 | `utility` | model 命中 `utilityPatterns`（glob，内置默认 `*nano* *-mini* *fast*`）→ utility 目标。CLI 内部辅助调用（摘要/标题）会发 `gpt-5.4-nano` 这类内部 id，正好路由到便宜快速模型 |
+| 2 | `virtual` | model 命中虚拟模型表（可跨供应商）→ 表内目标 |
+| 3 | `pinned` | model == 钉住名（`COPILOT_MODEL`）且已设默认虚拟模型 → `defaultVirtual` 目标 |
+| 4 | `default` | 兜底 → 激活供应商默认模型（`passthroughModel: true` 时透传原 model） |
+
+- 未知 model id 一律走兜底，**永不向上游 404**（规避 CLI 内部 id 直发上游的问题）；
+- 命中 1-3 时，转发参数（BaseURL/Key/超时/自定义头/`stripSampling`）取**目标供应商**；
+- 切默认模型三入口等价：`cops model use`、托盘「模型」菜单、Web 管理页 —— 都只改代理侧映射，环境变量不动，即时生效；
+- 请求日志记录 `virtualModel`（原始名）与 `routeRule`（命中的规则），用量统计仍按真实模型聚合。
 
 ### 配置文件 `~/.cops/config.json`
 
@@ -123,11 +152,22 @@ cops uninstall     # 恢复环境变量 + 清理自启（配置保留）
     "apiKey": "sk-...",
     "model": "glm-4.7",
     "models": ["glm-4.7", "glm-4-flash"],
+    "modelContext": { "glm-4.7": 128000, "glm-4-flash": 8000 },  // 真实模型上下文（token），/v1/models 的 context_length 来源
     "prices": { "glm-4.7": { "inputPerMillionTokens": 0.5, "outputPerMillionTokens": 2 } },
     "timeoutSec": 600,
     "passthroughModel": false,   // true=不改写 model
-    "noUsageInjection": false    // true=不注入 include_usage（上游不兼容时用）
+    "noUsageInjection": false,   // true=不注入 include_usage（上游不兼容时用）
+    "stripSampling": false       // true=剥离 temperature/top_p 等采样参数（CLI 会强制发 temperature:0，思考模型上游建议开启）
   }],
+  "routing": {                                // v0.2 模型路由（可选；缺省时全部走激活供应商默认模型，等价 v0.1）
+    "virtualModels": {
+      "cops-pro":   { "provider": "glm", "model": "glm-4.7" },
+      "cops-flash": { "provider": "glm", "model": "glm-4-flash", "contextWindow": 32000 }  // 可选覆盖；缺省回退真实模型 modelContext 值
+    },
+    "defaultVirtual": "cops-pro",             // 钉住名当前指向；cops model use 改这里
+    "utility":        { "provider": "glm", "model": "glm-4-flash" },
+    "utilityPatterns": ["*nano*", "*-mini*"]  // 留空用内置默认 *nano* *-mini* *fast*
+  },
   "requestLog": { "enabled": true, "maxBodyKB": 32, "retainDays": 7, "maxFileMB": 20 }
 }
 ```
@@ -158,6 +198,9 @@ cops uninstall     # 恢复环境变量 + 清理自启（配置保留）
 **Q: `/model` 显示的是 cops-active，上下文窗口信息不准？**
 虚拟模型名由代理改写，CLI 侧能力探测可能不准。追求精确显示可改用 `passthroughModel: true` 并把 `COPILOT_MODEL` 设为真实模型名。
 
+**Q: 想让重活走 pro、辅助小任务走 flash 怎么配？**
+`cops model add cops-pro --provider glm --model glm-4.7`、`cops model add cops-flash --provider glm --model glm-4-flash` 后 `cops model use cops-pro`。CLI 内部辅助调用（摘要/标题等）可在 Web 管理页或配置里加 utility 路由到 flash。托盘「模型」菜单随时一键切换。
+
 **Q: 安全性？**
 代理仅监听 `127.0.0.1`，管理页无鉴权（本机场景）。API Key 明文存于 `~/.cops/config.json`，请勿把该目录加入同步/备份到不受信位置。若改 `listen` 为 `0.0.0.0` 需自行承担风险。
 
@@ -172,7 +215,7 @@ go vet ./...
 go run . serve      # 源码直接运行
 ```
 
-路线图（v0.2 多模型路由：虚拟模型 pro/flash 分工、按请求规模自动路由）见 [ROADMAP.md](ROADMAP.md)。
+路线图（v0.2.1 autoRoute 按请求规模自动路由等）见 [ROADMAP.md](ROADMAP.md)。
 
 - `devtools/mockupstream`：模拟 OpenAI 兼容上游，用于手工冒烟测试
   （`go run ./devtools/mockupstream 9911 mock-a`）

@@ -45,6 +45,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/_cops/api/status", s.handleStatus)
 	mux.HandleFunc("/_cops/api/providers", s.handleProviders)
 	mux.HandleFunc("/_cops/api/switch", s.handleSwitch)
+	mux.HandleFunc("/_cops/api/routing", s.handleRouting)
+	mux.HandleFunc("/_cops/api/routing/use", s.handleRoutingUse)
 	mux.HandleFunc("/_cops/api/stats", s.handleStats)
 	mux.HandleFunc("/_cops/api/logs", s.handleLogs)
 	mux.HandleFunc("/_cops/api/shutdown", s.handleShutdown)
@@ -95,6 +97,17 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	_, autostart := winenv.GetAutostart()
 	resp["injected"] = winenv.IsInjected(config.EnvBackupPath())
 	resp["autostart"] = autostart
+	routing := map[string]any{
+		"defaultVirtual": cfg.Routing.DefaultVirtual,
+		"virtualModels":  cfg.Routing.SortedVirtualModels(),
+	}
+	if cfg.Routing.Utility != nil {
+		routing["utility"] = map[string]string{
+			"provider": cfg.Routing.Utility.Provider,
+			"model":    cfg.Routing.Utility.Model,
+		}
+	}
+	resp["routing"] = routing
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -154,6 +167,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 				cfg.Active = cfg.Providers[0].Name
 			}
 		}
+		cfg.ScrubProviderReferences(name)
 		if err := cfg.Save(); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -203,6 +217,76 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "active": p.Name, "model": p.Model})
+}
+
+// UseModel 设置默认虚拟模型（代理侧路由热切换，不动 COPILOT_MODEL 环境变量）。
+func (s *Server) UseModel(name string) (string, error) {
+	old := s.cfgPtr.Load()
+	if _, ok := old.Routing.VirtualModels[name]; !ok {
+		return "", fmt.Errorf("虚拟模型不存在: %s", name)
+	}
+	newCfg := *old
+	newCfg.Routing.DefaultVirtual = name
+	if err := newCfg.Save(); err != nil {
+		return "", err
+	}
+	s.cfgPtr.Store(&newCfg)
+	return name, nil
+}
+
+// handleRouting 全量读/写路由配置。
+func (s *Server) handleRouting(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{"routing": s.cfgPtr.Load().Routing})
+	case http.MethodPut, http.MethodPost:
+		old := s.cfgPtr.Load()
+		var req struct {
+			Routing config.RoutingConfig `json:"routing"`
+		}
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "JSON 解析失败: " + err.Error()})
+			return
+		}
+		newCfg := *old
+		newCfg.Routing = req.Routing
+		newCfg.Routing.Normalize()
+		if err := newCfg.ValidateRouting(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := newCfg.Save(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		s.cfgPtr.Store(&newCfg)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "routing": newCfg.Routing})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// handleRoutingUse CLI/附着托盘调用的默认虚拟模型切换。
+func (s *Server) handleRoutingUse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "JSON 解析失败"})
+		return
+	}
+	name, err := s.UseModel(req.Name)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "defaultVirtual": name})
 }
 
 // handleShutdown 优雅关停守护进程（托盘附着模式退出时调用）。
