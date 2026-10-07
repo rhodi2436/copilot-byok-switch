@@ -34,6 +34,8 @@ cd D:\personal\repos\copilot-byok-switch
 .\build.bat          # 产出 cops.exe（单文件、无运行时依赖）
 ```
 
+也可从 GitHub Actions 构建产物获取预编译二进制：master 分支最新 artifact（`cops-windows-x64.zip` / `cops-macos-universal.tar.gz`），或打 `v*` 标签后的 Release。
+
 ## 快速上手
 
 ```powershell
@@ -81,6 +83,17 @@ cops uninstall     # 恢复环境变量 + 清理自启（配置保留）
 - `--console` 参数保留控制台便于调试；开机自启以最小化方式启动
 
 注意：环境变量注入/恢复**只影响新开的终端**；已运行的 copilot 会话在托盘退出后会断流（代理已停），重开终端即走官方认证。
+
+## macOS 支持（第一阶段）
+
+macOS 已支持核心链路：`cops serve`（前台守护进程）+ 全部 CLI 命令 + Web 管理页 + 环境变量注入/恢复。与 Windows 的差异：
+
+- **注入方式**：`~/.zshrc` 标记块（nvm 风格 `# >>> cops >>>` … `# <<< cops <<<`），`cops install` / `cops inject` 写入，`cops restore` 删除；同样有备份文件，仅影响新开终端
+- **暂无托盘**：`cops tray` / 裸 `cops` 会提示替代方案后退出；用 `cops serve` 前台运行 + Web 管理页（`cops open`）代替
+- **暂无开机自启**：`cops install` 会跳过并提示；托盘与 LaunchAgent 自启将在第二阶段提供
+- **构建**：GitHub Actions 产出 universal 二进制（arm64 + amd64）；本机构建需 Xcode 命令行工具（`xcode-select --install`）后 `go build -o cops .`
+
+借到 Mac 实测时建议清单：`cops add` → `cops install` → 新开终端 `env | grep COPILOT` 验证注入 → `cops serve` → 跑一次 copilot → `cops restore` → 新开终端确认恢复。
 
 ## 命令一览
 

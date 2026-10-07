@@ -128,6 +128,9 @@ func RelaunchDetached(args ...string) error {
 	return cmd.Start()
 }
 
+// TraySupported 托盘在 Windows 已启用。
+func TraySupported() bool { return true }
+
 // RemoveAutostart 删除自启动项。
 func RemoveAutostart() error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.SET_VALUE)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -69,7 +70,11 @@ var installCmd = &cobra.Command{
 		if err == nil {
 			exe, _ = filepath.Abs(exe)
 			if err := winenv.SetAutostart(exe, "tray --autostart"); err != nil {
-				fmt.Println("⚠ 设置开机自启失败:", err)
+				if errors.Is(err, winenv.ErrUnsupported) {
+					fmt.Println("ℹ️ 开机自启将在本平台托盘阶段提供，暂跳过")
+				} else {
+					fmt.Println("⚠ 设置开机自启失败:", err)
+				}
 			}
 		}
 
@@ -81,7 +86,11 @@ var installCmd = &cobra.Command{
 		}
 		fmt.Println()
 		fmt.Println("下一步：")
-		fmt.Println("  1. 运行 cops tray 启动托盘（本机即刻生效；开机自启已设置）")
+		if winenv.TraySupported() {
+			fmt.Println("  1. 运行 cops tray 启动托盘（本机即刻生效；开机自启已设置）")
+		} else {
+			fmt.Println("  1. 运行 cops serve 前台启动守护进程（本平台暂无托盘）")
+		}
 		fmt.Println("  2. 打开一个新的终端（必须新开，已开的终端读不到新环境变量）")
 		if cfg.ActiveProvider() == nil {
 			fmt.Println("  3. cops add 添加供应商并填入真实 API Key（或托盘菜单打开管理页）")
@@ -255,10 +264,14 @@ var doctorCmd = &cobra.Command{
 				"运行 cops inject 或 cops tray 注入；新开终端后生效")
 		}
 
-		autoCmd, has := winenv.GetAutostart()
-		check(has, "开机自启动已设置（cops tray）", "运行 cops install")
-		if has {
-			fmt.Printf("   %s\n", autoCmd)
+		if winenv.TraySupported() {
+			autoCmd, has := winenv.GetAutostart()
+			check(has, "开机自启动已设置（cops tray）", "运行 cops install")
+			if has {
+				fmt.Printf("   %s\n", autoCmd)
+			}
+		} else {
+			fmt.Println("⏭ 开机自启动: 本平台暂不支持（将在托盘阶段提供）")
 		}
 
 		fmt.Printf("\n结果: %d 项通过, %d 项失败\n", ok, fail)

@@ -87,7 +87,7 @@ func TestValidateRouting(t *testing.T) {
 }
 
 func TestRoutingRoundtripAndNormalize(t *testing.T) {
-	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir()); t.Setenv("HOME", t.TempDir())
 	c := testConfig()
 	c.Routing = RoutingConfig{
 		VirtualModels: map[string]RouteTarget{
@@ -109,7 +109,7 @@ func TestRoutingRoundtripAndNormalize(t *testing.T) {
 		t.Fatalf("virtual entry mismatch: %+v", got.Routing.VirtualModels)
 	}
 	// 旧配置（无 routing 字段）加载后为零值，校验通过。
-	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir()); t.Setenv("HOME", t.TempDir())
 	c2 := testConfig()
 	c2.Save()
 	got2, _ := Load()

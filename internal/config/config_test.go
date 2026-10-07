@@ -8,7 +8,7 @@ import (
 
 func TestSaveLoadRoundtrip(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("USERPROFILE", dir)
+	t.Setenv("USERPROFILE", dir); t.Setenv("HOME", dir)
 	if got := Path(); !strings.HasSuffix(got, filepath.Join(".cops", "config.json")) {
 		t.Fatalf("Path() = %s, want under %s", got, filepath.Join(dir, ".cops"))
 	}
@@ -37,7 +37,7 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 }
 
 func TestSaveCreatesBackup(t *testing.T) {
-	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir()); t.Setenv("HOME", t.TempDir())
 	c := Default()
 	c.Providers = []Provider{{Name: "a", BaseURL: "https://a.example.com"}}
 	if err := c.Save(); err != nil {
@@ -157,7 +157,7 @@ func TestModelContextValidateAndNormalize(t *testing.T) {
 }
 
 func TestModelContextRoundtrip(t *testing.T) {
-	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir()); t.Setenv("HOME", t.TempDir())
 	c := Default()
 	c.Providers = []Provider{{
 		Name: "glm", BaseURL: "https://open.bigmodel.cn/api/paas/v4",

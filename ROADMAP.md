@@ -4,7 +4,19 @@
 > **v0.3 托盘常驻**（`cops tray`：启动自动注入环境变量、退出自动恢复并停止代理、托盘菜单快捷切换、附着/嵌入双模式、inject/restore 兜底命令）；
 > **v0.2.0 代理侧确定性多模型路由**（四级解析：utility 识别 + 虚拟模型表 + 钉住名映射 + 默认兜底；`cops model` 命令族、托盘「模型」菜单、Web 管理页路由编辑区、stripSampling、doctor 路由校验；autoRoute 未实现，见 v0.2.1）；
 > **v0.2.x 上下文窗口元数据**（两级配置：`providers[].modelContext` 真实模型级 + 虚拟模型 `contextWindow` 覆盖（0=回退）；CLI/Web 支持 `128k`/`1.5m` 简写；`/v1/models` 条目输出 `context_length`（OpenRouter 惯例）供其他 OpenAI 客户端读取；亦为 v0.2.1 autoRoute 按请求规模路由备好数据基础）；
-> **v0.3.x 裸 cops 直启**（无参数 `cops` / 双击 `cops.exe` = `cops tray`：守护进程 + 托盘 + 启动即注入，已运行守护进程时自动附着；`cops --console` 保留控制台；所有子命令行为不变；双击/独占控制台启动时自我重启为无控制台分离进程，原进程立即退出，控制台窗口干净关闭——规避 Windows Terminal 下 `FreeConsole` 残留 `[process exited]` 黑窗的问题）。
+> **v0.3.x 裸 cops 直启**（无参数 `cops` / 双击 `cops.exe` = `cops tray`：守护进程 + 托盘 + 启动即注入，已运行守护进程时自动附着；`cops --console` 保留控制台；所有子命令行为不变；双击/独占控制台启动时自我重启为无控制台分离进程，原进程立即退出，控制台窗口干净关闭——规避 Windows Terminal 下 `FreeConsole` 残留 `[process exited]` 黑窗的问题）；
+> **v0.4 macOS 支持第一阶段（核心移植）**（`winenv_darwin.go`：环境变量经 `~/.zshrc` 标记块注入/恢复（`# >>> cops >>>`，shellblock 平台中立实现 + 单测）；托盘/裸 cops 在 darwin 优雅降级提示；install 跳过自启、doctor 显示「暂不支持」；GitHub Actions 双平台构建 + universal 二进制 + tag Release）。
+
+## 迭代 v0.4 —— macOS 支持（第二阶段：托盘与系统集成）
+
+第一阶段的差异项补齐（需借 Mac 实机验收）：
+
+- **托盘启用**：systray 在 darwin 需 cgo（CI 已可编译）；实机验证菜单栏图标、菜单刷新、退出语义；`TraySupported()` 翻转为 true
+- **`.app` bundle**：`Cops.app`（`LSUIElement=true` 隐藏 Dock 图标），Finder 双击直启守护进程（对标 Windows 双击 cops.exe）
+- **LaunchAgent 开机自启**：`~/Library/LaunchAgents/com.cops.tray.plist`（RunAtLoad），`SetAutostart/RemoveAutostart/GetAutostart` darwin 实装，install/doctor 解除降级
+- **实测清单**（README 已列）：注入/恢复往返、serve + copilot 穿透、切换供应商、Web 管理页
+
+---
 
 ## 迭代 v0.3.x —— 待办小项
 
