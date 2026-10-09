@@ -39,11 +39,21 @@ jobs:
           CGO_ENABLED=1 GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o cops-arm64 .
           CGO_ENABLED=1 GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o cops-amd64 .
           lipo -create -output cops cops-arm64 cops-amd64
+          lipo cops -verify_arch arm64 x86_64
+          chmod 755 cops
+          mkdir -p Cops.app/Contents/MacOS
+          cp cops Cops.app/Contents/MacOS/cops
+          chmod 755 Cops.app/Contents/MacOS/cops
+          cp packaging/macos/Info.plist Cops.app/Contents/Info.plist
+          plutil -lint Cops.app/Contents/Info.plist
+          ditto -c -k --sequesterRsrc --keepParent Cops.app cops-macos-universal-app.zip
           tar -czf cops-macos-universal.tar.gz cops
       - uses: actions/upload-artifact@v4
         with:
           name: cops-macos-universal
-          path: cops-macos-universal.tar.gz
+          path: |
+            cops-macos-universal.tar.gz
+            cops-macos-universal-app.zip
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -58,4 +68,4 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" cops-windows-x64.zip cops-macos-universal.tar.gz --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" cops-windows-x64.zip cops-macos-universal.tar.gz cops-macos-universal-app.zip --generate-notes

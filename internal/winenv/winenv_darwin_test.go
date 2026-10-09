@@ -3,9 +3,41 @@
 package winenv
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestRenderLaunchAgent(t *testing.T) {
+	data, err := renderLaunchAgent("/Applications/Cops & Tools.app/Contents/MacOS/cops", "tray --autostart")
+	if err != nil {
+		t.Fatalf("render LaunchAgent: %v", err)
+	}
+	plist := string(data)
+	for _, want := range []string{
+		"<!DOCTYPE plist",
+		"com.cops.tray",
+		"/Applications/Cops &amp; Tools.app/Contents/MacOS/cops",
+		"<string>tray</string>",
+		"<string>--autostart</string>",
+		"<key>RunAtLoad</key>",
+		"<true></true>",
+	} {
+		if !strings.Contains(plist, want) {
+			t.Errorf("LaunchAgent plist missing %q:\n%s", want, plist)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "com.cops.tray.plist")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write LaunchAgent plist: %v", err)
+	}
+	out, err := exec.Command("/usr/bin/plutil", "-lint", path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("LaunchAgent plist is invalid: %v: %s", err, out)
+	}
+}
 
 // 通过替换 zshrcPath 指向临时文件，验证 darwin 环境变量三件套全链路。
 func TestDarwinUserEnvRoundtrip(t *testing.T) {
@@ -42,7 +74,7 @@ func TestDarwinUserEnvRoundtrip(t *testing.T) {
 		t.Fatal("block should be removed when empty")
 	}
 
-	if TraySupported() {
-		t.Fatal("darwin 第一阶段 TraySupported 应为 false")
+	if !TraySupported() {
+		t.Fatal("darwin 应启用托盘")
 	}
 }

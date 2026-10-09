@@ -28,10 +28,9 @@ var trayCmd = &cobra.Command{
   - 退出时自动恢复环境变量并停止代理（"停止即还原"）
   - 若检测到已有守护进程在运行，则以附着模式仅提供托盘 UI`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// 0a. 平台降级：托盘尚未在该平台启用（如 macOS 第一阶段），
-		//     提示替代方案后干净退出（裸 cops 委托到此，同样适用）。
+		// 0a. 平台降级：托盘不可用的平台提示替代方案后干净退出。
 		if !winenv.TraySupported() {
-			fmt.Println("当前平台暂不支持托盘模式（规划中）。")
+			fmt.Println("当前平台不支持托盘模式。")
 			fmt.Println("替代方案：cops serve 前台运行守护进程，配合 Web 管理页使用；")
 			fmt.Println("环境变量注入可用 cops install / cops inject（新开终端生效）。")
 			return nil

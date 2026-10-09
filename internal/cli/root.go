@@ -24,7 +24,7 @@ COPILOT_PROVIDER_* 环境变量固定指向它；切换模型供应商只需一�
 无需重启 Copilot CLI，真实 API Key 也无需写入 shell 环境。
 
 快速上手:
-  cops（或双击 cops.exe）  # 无参数默认进托盘 = cops tray：守护进程 + 一键切换
+  cops（Windows 双击 cops.exe / macOS 双击 Cops.app）  # 默认进托盘：守护进程 + 一键切换
   cops install            # 写入 COPILOT_* 环境变量 + 设置开机自启
   cops add glm --url ...  # 添加供应商
   cops switch glm         # 一键切换

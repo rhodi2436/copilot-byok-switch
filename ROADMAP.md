@@ -5,17 +5,15 @@
 > **v0.2.0 代理侧确定性多模型路由**（四级解析：utility 识别 + 虚拟模型表 + 钉住名映射 + 默认兜底；`cops model` 命令族、托盘「模型」菜单、Web 管理页路由编辑区、stripSampling、doctor 路由校验；autoRoute 未实现，见 v0.2.1）；
 > **v0.2.x 上下文窗口元数据**（两级配置：`providers[].modelContext` 真实模型级 + 虚拟模型 `contextWindow` 覆盖（0=回退）；CLI/Web 支持 `128k`/`1.5m` 简写；`/v1/models` 条目输出 `context_length`（OpenRouter 惯例）供其他 OpenAI 客户端读取；亦为 v0.2.1 autoRoute 按请求规模路由备好数据基础）；
 > **v0.3.x 裸 cops 直启**（无参数 `cops` / 双击 `cops.exe` = `cops tray`：守护进程 + 托盘 + 启动即注入，已运行守护进程时自动附着；`cops --console` 保留控制台；所有子命令行为不变；双击/独占控制台启动时自我重启为无控制台分离进程，原进程立即退出，控制台窗口干净关闭——规避 Windows Terminal 下 `FreeConsole` 残留 `[process exited]` 黑窗的问题）；
-> **v0.4 macOS 支持第一阶段（核心移植）**（`winenv_darwin.go`：环境变量经 `~/.zshrc` 标记块注入/恢复（`# >>> cops >>>`，shellblock 平台中立实现 + 单测）；托盘/裸 cops 在 darwin 优雅降级提示；install 跳过自启、doctor 显示「暂不支持」；GitHub Actions 双平台构建 + universal 二进制 + tag Release）；
+> **v0.4 macOS 支持**（`winenv_darwin.go`：环境变量经 `~/.zshrc` 标记块注入/恢复，LaunchAgent 登录自启，原生 systray；Finder 可双击 `Cops.app` 启动菜单栏常驻；GitHub Actions 构建 arm64 + amd64 universal binary 与 `.app` 并发布）；
 > **v0.3.x WebUI 修补与模型最大输出**（标签切换即时渲染 providers/routing；上下文输入统一「数值 × 单位」；新增 `providers[].modelMaxOutput` 真实模型级最大输出 token：请求中 `max_tokens`/`max_completion_tokens` 超限即被钳制（Copilot CLI 每请求固定发送 `max_tokens`，超出上游上限时部分供应商直接 400）、`/v1/models` 条目输出 `max_output_tokens`、Web 弹窗逐模型「上下文 / 最大输出」两组输入与卡片展示）。
 
-## 迭代 v0.4 —— macOS 支持（第二阶段：托盘与系统集成）
+## macOS 实机验收
 
-第一阶段的差异项补齐（需借 Mac 实机验收）：
-
-- **托盘启用**：systray 在 darwin 需 cgo（CI 已可编译）；实机验证菜单栏图标、菜单刷新、退出语义；`TraySupported()` 翻转为 true
-- **`.app` bundle**：`Cops.app`（`LSUIElement=true` 隐藏 Dock 图标），Finder 双击直启守护进程（对标 Windows 双击 cops.exe）
-- **LaunchAgent 开机自启**：`~/Library/LaunchAgents/com.cops.tray.plist`（RunAtLoad），`SetAutostart/RemoveAutostart/GetAutostart` darwin 实装，install/doctor 解除降级
-- **实测清单**（README 已列）：注入/恢复往返、serve + copilot 穿透、切换供应商、Web 管理页
+- 菜单栏图标、菜单刷新、退出恢复环境变量并停止代理
+- `Cops.app` Finder 双击启动，Dock 中不显示应用图标
+- LaunchAgent 安装、登录启动、卸载及重复安装
+- 注入/恢复往返、serve + Copilot CLI 穿透、切换供应商、Web 管理页
 
 ---
 

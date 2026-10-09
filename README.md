@@ -26,7 +26,7 @@ Copilot CLI ──固定指向──▶ cops 代理(127.0.0.1:8317/v1) ──路
 
 ## 安装
 
-前置要求：[Go 1.25+](https://go.dev/dl/)（Windows/macOS/Linux 均可构建）。
+前置要求：[Go 1.26+](https://go.dev/dl/)（Windows/macOS/Linux 均可构建）。
 
 ```powershell
 git clone <本仓库> D:\personal\repos\copilot-byok-switch
@@ -34,7 +34,7 @@ cd D:\personal\repos\copilot-byok-switch
 .\build.bat          # 产出 cops.exe（单文件、无运行时依赖）
 ```
 
-也可从 GitHub Actions 构建产物获取预编译二进制：master 分支最新 artifact（`cops-windows-x64.zip` / `cops-macos-universal.tar.gz`），或打 `v*` 标签后的 Release。
+也可从 GitHub Actions 构建产物获取预编译二进制：master 分支最新 artifact（Windows `cops-windows-x64.zip`；macOS `cops-macos-universal.tar.gz` / Finder 应用 `cops-macos-universal-app.zip`），或打 `v*` 标签后的 Release。
 
 ## 快速上手
 
@@ -47,8 +47,8 @@ cops add ollama --url http://localhost:11434/v1 --model qwen3:32b
 # 2. 一键安装：注入 COPILOT_* 用户环境变量（带备份）+ 托盘开机自启
 cops install
 
-# 3. 启动托盘（本机即刻生效；开机自启已设置）
-cops tray        # 也可直接运行裸 cops（无参数）或双击 cops.exe，等价于 cops tray
+# 3. 开机自启已设置；macOS 上 install 会立即加载托盘。
+#    Windows 首次安装后手动运行 cops tray；也可双击 cops.exe
 
 # 4. 打开新的终端（必须新开！），运行 copilot 即走 glm
 # 5. 随时切换 —— 托盘菜单点一下，或命令行，均无需重启 copilot
@@ -70,7 +70,7 @@ cops uninstall     # 恢复环境变量 + 清理自启（配置保留）
 
 ## 托盘模式（推荐常驻方式）
 
-`cops tray` = 托盘 UI + 代理守护进程，单进程。**裸 `cops`（无参数）与双击 `cops.exe` 等价于 `cops tray`**（双击检测到控制台仅本进程时自动重启为无控制台的分离进程，黑窗一闪即关、不留残留；在终端中运行则保持原行为，`cops --console` 可保留控制台调试）：
+`cops tray` = 托盘 UI + 代理守护进程，单进程。**裸 `cops`（无参数）、Windows 双击 `cops.exe`、macOS 双击 `Cops.app` 均启动托盘模式**（Windows 双击检测到控制台仅本进程时自动重启为无控制台的分离进程，黑窗一闪即关、不留残留；在终端中运行则保持原行为，`cops --console` 可保留控制台调试）：
 
 - **启动即注入**：自动写入 4 个 `COPILOT_*` 用户环境变量指向本地代理；
   注入前原值备份到 `~/.cops/env-backup.json`（二次启动不覆盖最早备份）
@@ -84,26 +84,35 @@ cops uninstall     # 恢复环境变量 + 清理自启（配置保留）
 
 注意：环境变量注入/恢复**只影响新开的终端**；已运行的 copilot 会话在托盘退出后会断流（代理已停），重开终端即走官方认证。
 
-## macOS 支持（第一阶段）
+## macOS
 
-macOS 已支持核心链路：`cops serve`（前台守护进程）+ 全部 CLI 命令 + Web 管理页 + 环境变量注入/恢复。与 Windows 的差异：
+macOS 支持完整 CLI、Web 管理页、原生菜单栏托盘、用户级 LaunchAgent 开机自启，以及 Intel/Apple Silicon universal binary。获取发布包后：
 
-- **注入方式**：`~/.zshrc` 标记块（nvm 风格 `# >>> cops >>>` … `# <<< cops <<<`），`cops install` / `cops inject` 写入，`cops restore` 删除；同样有备份文件，仅影响新开终端
-- **暂无托盘**：`cops tray` / 裸 `cops` 会提示替代方案后退出；用 `cops serve` 前台运行 + Web 管理页（`cops open`）代替
-- **暂无开机自启**：`cops install` 会跳过并提示；托盘与 LaunchAgent 自启将在第二阶段提供
-- **构建**：GitHub Actions 产出 universal 二进制（arm64 + amd64）；本机构建需 Xcode 命令行工具（`xcode-select --install`）后 `go build -o cops .`
+```sh
+# 命令行安装：把二进制放在稳定路径，LaunchAgent 会使用该路径启动
+tar -xzf cops-macos-universal.tar.gz
+mkdir -p "$HOME/.local/bin"
+mv cops "$HOME/.local/bin/cops"
+"$HOME/.local/bin/cops" install
+```
 
-借到 Mac 实测时建议清单：`cops add` → `cops install` → 新开终端 `env | grep COPILOT` 验证注入 → `cops serve` → 跑一次 copilot → `cops restore` → 新开终端确认恢复。
+也可解压 `cops-macos-universal-app.zip`，将 `Cops.app` 移入 `/Applications` 后双击启动；应用以菜单栏常驻，不在 Dock 显示。首次启动后可用菜单栏图标管理供应商、模型和注入状态。`cops install` 会安装并加载 `~/Library/LaunchAgents/com.cops.tray.plist`，因此托盘会立即启动，并在之后登录时自动启动；不要再重复运行 `cops tray`。
+
+- **环境变量**：cops 在 `~/.zshrc` 中维护 `# >>> cops >>>` 标记块；`cops install` / `cops inject` 注入，退出托盘、`cops restore` 或 `cops uninstall` 恢复。仅对新启动的 zsh 终端生效。
+- **构建**：本机构建需 Xcode Command Line Tools（`xcode-select --install`）和 Go 1.26+；GitHub Actions 发布 arm64 + amd64 universal binary 与 `.app`。
+- **首次运行**：发布包未经过 Apple notarization；若 Gatekeeper 阻止打开，请在系统设置「隐私与安全性」中允许，或在 Finder 中右键应用并选择「打开」。
+
+验证注入可在新终端运行 `env | grep COPILOT`。卸载自启动并恢复原环境变量：`cops uninstall`。
 
 ## 命令一览
 
 | 命令 | 说明 |
 |---|---|
-| `cops` / `cops.exe 双击` | 无参数默认进托盘（= `cops tray`，双击直启守护进程） |
+| `cops` / `cops.exe 双击` / macOS `Cops.app` 双击 | 无参数默认进托盘（= `cops tray`，启动守护进程） |
 | `cops tray [--console]` | 托盘常驻（推荐）：启动注入 / 退出恢复 / 菜单切换 |
 | `cops serve [--headless]` | 前台守护进程（无托盘） |
-| `cops install [--model X]` | 注入 4 个 `COPILOT_*`（带备份）+ HKCU Run 自启（cops tray） |
-| `cops uninstall` | 恢复环境变量 + 清自启（保留 `~/.cops/` 数据） |
+| `cops install [--model X]` | 注入 4 个 `COPILOT_*`（带备份）+ 设置平台用户级自启（cops tray） |
+| `cops uninstall` | 恢复环境变量 + 清理自启（保留 `~/.cops/` 数据） |
 | `cops inject` / `cops restore` | 手动注入 / 恢复环境变量（托盘崩溃后兜底） |
 | `cops add [名称] --url --key --model [--models] [--price-in --price-out] [--context 128k]` | 添加供应商（--context 为默认模型上下文） |
 | `cops list` / `cops current` | 列出供应商 / 查看当前激活 |
@@ -121,7 +130,7 @@ macOS 已支持核心链路：`cops serve`（前台守护进程）+ 全部 CLI �
 
 ## 工作原理
 
-1. `cops install` 写入用户环境变量（HKCU\Environment，并广播 WM_SETTINGCHANGE）：
+1. `cops install` 写入用户环境变量（Windows 使用 HKCU\Environment 并广播 WM_SETTINGCHANGE；macOS 使用 `~/.zshrc` 标记块）：
    - `COPILOT_PROVIDER_TYPE=openai`
    - `COPILOT_PROVIDER_BASE_URL=http://127.0.0.1:8317/v1`（固定指向本地代理）
    - `COPILOT_PROVIDER_API_KEY=cops-local`（占位符，真实 Key 由代理注入）

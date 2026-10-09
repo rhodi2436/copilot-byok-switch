@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -44,8 +45,8 @@ var installCmd = &cobra.Command{
 	Long: `将 Copilot CLI 指向本地 cops 代理：
   1. 注入用户环境变量 COPILOT_PROVIDER_TYPE / BASE_URL / API_KEY / MODEL
      （自动备份原值到 ~/.cops/env-backup.json，cops tray 退出或 uninstall 时恢复）
-  2. 广播 WM_SETTINGCHANGE（新开终端即可生效，已开终端需重开）
-  3. 写入 HKCU Run 开机自启动 cops tray（托盘常驻 + 启动即注入 + 退出即恢复）
+	  2. 写入平台对应的用户环境配置（新开终端即可生效，已开终端需重开）
+	  3. 设置用户级开机自启动 cops tray（托盘常驻 + 启动即注入 + 退出即恢复）
 
 完成后请打开新的终端运行 copilot。`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -71,7 +72,7 @@ var installCmd = &cobra.Command{
 			exe, _ = filepath.Abs(exe)
 			if err := winenv.SetAutostart(exe, "tray --autostart"); err != nil {
 				if errors.Is(err, winenv.ErrUnsupported) {
-					fmt.Println("ℹ️ 开机自启将在本平台托盘阶段提供，暂跳过")
+					fmt.Println("ℹ️ 当前平台不支持开机自启，已跳过")
 				} else {
 					fmt.Println("⚠ 设置开机自启失败:", err)
 				}
@@ -86,10 +87,12 @@ var installCmd = &cobra.Command{
 		}
 		fmt.Println()
 		fmt.Println("下一步：")
-		if winenv.TraySupported() {
+		if runtime.GOOS == "darwin" {
+			fmt.Println("  LaunchAgent 已加载，托盘已启动；以后登录时会自动启动")
+		} else if winenv.TraySupported() {
 			fmt.Println("  1. 运行 cops tray 启动托盘（本机即刻生效；开机自启已设置）")
 		} else {
-			fmt.Println("  1. 运行 cops serve 前台启动守护进程（本平台暂无托盘）")
+			fmt.Println("  1. 运行 cops serve 前台启动守护进程（本平台不支持托盘）")
 		}
 		fmt.Println("  2. 打开一个新的终端（必须新开，已开的终端读不到新环境变量）")
 		if cfg.ActiveProvider() == nil {
@@ -271,7 +274,7 @@ var doctorCmd = &cobra.Command{
 				fmt.Printf("   %s\n", autoCmd)
 			}
 		} else {
-			fmt.Println("⏭ 开机自启动: 本平台暂不支持（将在托盘阶段提供）")
+			fmt.Println("⏭ 开机自启动: 本平台暂不支持")
 		}
 
 		fmt.Printf("\n结果: %d 项通过, %d 项失败\n", ok, fail)
