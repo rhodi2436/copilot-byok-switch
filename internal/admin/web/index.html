@@ -98,7 +98,7 @@
   .pcard .acts{margin-top:14px;display:flex;gap:8px}
 
   /* ── 路由卡片行 ─────────────────────── */
-  .rt{display:grid;grid-template-columns:34px 1.1fr .9fr 1.2fr 110px 40px;gap:10px;align-items:center;
+  .rt{display:grid;grid-template-columns:34px 1.1fr .9fr 1.2fr 150px 40px;gap:10px;align-items:center;
     background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;transition:border .18s}
   .rt:hover{border-color:var(--line2)}
   .rt input,.rt select{background:var(--bg2);border:1px solid var(--line);border-radius:7px;color:var(--tx);padding:6px 9px;font-size:13px;width:100%;outline:none;transition:border .18s,box-shadow .18s}
@@ -179,9 +179,14 @@
   .tag{display:inline-flex;align-items:center;background:rgba(124,77,255,.18);border:1px solid rgba(124,77,255,.45);border-radius:6px;padding:2px 4px 2px 9px;font-size:12px;font-family:var(--mono);color:#d9ccff}
   .tag i{cursor:pointer;margin-left:6px;font-style:normal;color:var(--faint);border-radius:4px;padding:0 4px}
   .tag i:hover{color:var(--err)}
-  .mcr{display:grid;grid-template-columns:1fr 130px 34px;gap:8px;margin-top:8px}
+  .mcr{display:grid;grid-template-columns:1fr 190px 34px;gap:8px;margin-top:8px}
   .mcr button{background:transparent;border:1px solid #5b2b47;color:var(--err);border-radius:7px;cursor:pointer;font-size:12px}
   .mcr button:hover{border-color:var(--err)}
+
+  /* 上下文输入：数值 × 单位（k/m/tokens） */
+  .ctxgrp{display:flex;gap:6px;align-items:center}
+  .ctxgrp input{flex:1;min-width:0}
+  .ctxgrp select{width:auto;flex:none}
 
   /* ── toast ─────────────────────────── */
   #toasts{position:fixed;right:20px;bottom:20px;display:flex;flex-direction:column;gap:8px;z-index:80}
@@ -251,7 +256,7 @@
             <input type="checkbox" id="uEnable" style="accent-color:var(--purple);width:16px;height:16px"> 启用</label>
           <select id="uProvider" class="in"></select>
           <input id="uModel" class="in mono" style="width:210px" placeholder="真实模型（如 glm-4-flash）" list="uModelList">
-          <input id="uCtx" class="in mono" style="width:110px" placeholder="上下文 128k" title="上下文窗口覆盖，留空回退真实模型配置">
+          <div id="uCtxG" class="ctxgrp" style="width:150px" title="上下文窗口覆盖，留空回退真实模型配置"></div>
           <input id="uPatterns" class="in mono" style="flex:1;min-width:250px" placeholder="匹配模式（空格分隔），留空用默认 *nano* *-mini* *fast*">
         </div>
         <div class="hint" style="margin-top:8px">Copilot CLI 内部辅助调用（摘要/标题生成等）使用 gpt-5.4-nano 这类内部 id；命中模式时改写到上面的廉价快速模型。</div>
@@ -316,7 +321,7 @@
       <label>模型清单（回车添加，退格删除标签）</label>
       <div class="chipin" id="chipBox"><input id="chipIn" placeholder="输入模型名后回车，如 glm-4-flash"></div>
       <datalist id="chipDl"></datalist>
-      <label>模型上下文（逐模型设置，支持 128k / 1.5m 简写）</label>
+      <label>模型上下文（逐模型设置，数值 × 单位）</label>
       <div id="mcRows"></div>
       <button class="btn mini" type="button" onclick="ui.addMcRow()">＋ 添加模型上下文</button>
       <label>价格：每百万 tokens 输入 / 输出（可选，用于费用估算）</label>
@@ -341,15 +346,28 @@ const $$ = s => document.querySelectorAll(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtN = n => (n||0).toLocaleString('zh-CN');
 const cost = c => c ? '¥'+c.toFixed(4) : '—';
-const parseCtxTokens = s => {
-  s = String(s||'').trim().toLowerCase();
-  if (!s) return NaN;
-  let m = 1;
-  if (s.endsWith('k')) { m = 1e3; s = s.slice(0,-1); }
-  else if (s.endsWith('m')) { m = 1e6; s = s.slice(0,-1); }
-  if (!/^\d+(\.\d+)?$/.test(s)) return NaN;
-  const n = Math.round(parseFloat(s)*m);
-  return n > 0 ? n : NaN;
+// 上下文窗口输入统一为「数值 × 单位」，unit 下拉 value 即倍率，杜绝 128k/1.5m 类简写歧义。
+const CTX_UNITS = [[1, 'tokens'], [1000, 'k'], [1000000, 'm']];
+const splitCtx = n => {
+  n = n | 0;
+  if (n <= 0) return null;
+  if (n >= 1e6) return {num: +((n/1e6).toFixed(2)), unit: 1000000};
+  if (n >= 1e3) return {num: +((n/1e3).toFixed(2)), unit: 1000};
+  return {num: n, unit: 1};
+};
+const ctxInner = (cls, n) => {
+  const s = splitCtx(n || 0);
+  const u = s ? s.unit : 1000;
+  return `<input type="number" min="0" step="any" class="in mono ${cls}-num" placeholder="如 128" title="上下文窗口数值"${s ? ` value="${s.num}"` : ''}>` +
+    `<select class="in ${cls}-unit" title="单位：k = 千 tokens，m = 百万 tokens，tokens = 原始值">${CTX_UNITS.map(([v, l]) => `<option value="${v}"${u === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+};
+const ctxGrp = (cls, n) => `<div class="ctxgrp">${ctxInner(cls, n)}</div>`;
+const ctxGrpVal = el => {
+  const raw = el.querySelector('input').value.trim();
+  if (!raw) return 0;
+  const n = parseFloat(raw);
+  if (!isFinite(n) || n <= 0) return NaN;
+  return Math.round(n * parseFloat(el.querySelector('select').value));
 };
 const fmtCtxTokens = n => {
   n = n|0;
@@ -396,6 +414,8 @@ const ui = {
     $$('#tabs .tab').forEach(a => a.classList.toggle('on', a.dataset.t === t));
     $$('.view').forEach(v => v.classList.toggle('on', v.id === 'v-'+t));
     if (t === 'overview') this.renderOverview();
+    if (t === 'providers') this.renderProviders();
+    if (t === 'routing') this.renderRouting();
     if (t === 'stats') this.renderStats();
     if (t === 'logs') this.renderLogs();
   },
@@ -611,7 +631,7 @@ const ui = {
     for (const m of (p ? p.models||[] : [])) this.addChip(m);
     $('#mcRows').innerHTML = '';
     const mc = p && p.modelContext ? Object.entries(p.modelContext) : [];
-    for (const [m, v] of mc) this.addMcRow(m, fmtCtxTokens(v));
+    for (const [m, v] of mc) this.addMcRow(m, v);
     const price = p && p.prices && p.prices[p.model];
     $('#fPriceIn').value = price ? price.inputPerMillionTokens : '';
     $('#fPriceOut').value = price ? price.outputPerMillionTokens : '';
@@ -635,7 +655,9 @@ const ui = {
       name: $('#fName').value.trim(), url: $('#fUrl').value.trim(),
       key: $('#fKey').value, model: $('#fModel').value.trim(),
       chips: this.chipsGet(), mc: [...$('#mcRows').querySelectorAll('.mcr')].map(r => ({
-        m: r.querySelector('.mc-m').value.trim(), c: r.querySelector('.mc-c').value.trim(),
+        m: r.querySelector('.mc-m').value.trim(),
+        n: r.querySelector('.mc-num').value.trim(),
+        u: r.querySelector('.mc-unit').value,
       })),
       pin: $('#fPriceIn').value, pout: $('#fPriceOut').value,
     };
@@ -654,12 +676,12 @@ const ui = {
     this.syncDatalists();
   },
 
-  addMcRow(model, ctx) {
+  addMcRow(model, ctxTokens) {
     const row = document.createElement('div');
     row.className = 'mcr';
     row.innerHTML = `
       <input class="in mono mc-m" placeholder="模型名（如 glm-4.7）" list="chipDl" value="${esc(model||'')}">
-      <input class="in mono mc-c" placeholder="128k / 1.5m" title="支持 128k、1.5m 简写" value="${esc(ctx||'')}">
+      ${ctxGrp('mc', ctxTokens || 0)}
       <button type="button" title="删除该行">✕</button>`;
     row.querySelector('button').addEventListener('click', () => row.remove());
     $('#mcRows').appendChild(row);
@@ -681,13 +703,13 @@ const ui = {
     if (d.mc.length) {
       const mc = {};
       for (const r of d.mc) {
-        if (!r.m && !r.c) continue;
-        const v = parseCtxTokens(r.c);
-        if (!r.m || isNaN(v)) {
-          $('#dlgErr').textContent = `模型上下文不合法：「${r.m||'？'}: ${r.c||'？'}」（窗口支持 128k、1.5m 简写）`;
+        if (!r.m && !r.n) continue;
+        const num = parseFloat(r.n);
+        if (!r.m || !isFinite(num) || num <= 0) {
+          $('#dlgErr').textContent = `模型上下文不合法：「${r.m || '？'}」需填模型名与正数数值`;
           return;
         }
-        mc[r.m] = v;
+        mc[r.m] = Math.round(num * parseFloat(r.u));
       }
       if (Object.keys(mc).length) p.modelContext = mc;
     }
@@ -721,7 +743,7 @@ const ui = {
     $('#uProvider').innerHTML = this.providers.map(p =>
       `<option ${u&&u.provider===p.name?'selected':''} value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
     this.fillModels('#uModel', u ? u.model : '');
-    $('#uCtx').value = u && u.contextWindow ? fmtCtxTokens(u.contextWindow) : '';
+    $('#uCtxG').innerHTML = ctxInner('uCtx', u && u.contextWindow || 0);
     $('#uPatterns').value = (r.utilityPatterns||[]).join(' ');
     $('#rtErr').textContent = '';
   },
@@ -747,7 +769,7 @@ const ui = {
       <input class="in mono rt-n" placeholder="虚拟名（如 cops-flash）" value="${esc(name||'')}">
       <select class="in rt-p">${this.providers.map(p=>`<option ${t.provider===p.name?'selected':''} value="${esc(p.name)}">${esc(p.name)}</option>`).join('')}</select>
       <input class="in mono rt-m" placeholder="真实模型 ID" list="uModelList" value="${esc(t.model||'')}">
-      <input class="in mono rt-c" placeholder="覆盖上下文（可空）" title="如 128k、1.5m；留空回退该模型配置" value="${t.contextWindow?fmtCtxTokens(t.contextWindow):''}">
+      ${ctxGrp('rt-c', t.contextWindow || 0)}
       <button class="del" title="删除该虚拟模型">✕</button>`;
     $('#rtList').appendChild(card);
   },
@@ -764,14 +786,14 @@ const ui = {
       const n = c.querySelector('.rt-n').value.trim();
       const p = c.querySelector('.rt-p').value;
       const m = c.querySelector('.rt-m').value.trim();
-      const cs = c.querySelector('.rt-c').value.trim();
-      if (!n && !m && !cs) continue; // 整行空白忽略
+      const csRaw = c.querySelector('.rt-c-num') ? c.querySelector('.rt-c-num').value.trim() : '';
+      if (!n && !m && !csRaw) continue; // 整行空白忽略
       if (!n) return {err: '虚拟名不能为空'};
       if (virtualModels[n]) return {err: `虚拟名重复：「${n}」`};
       const t = {provider: p, model: m};
-      if (cs) {
-        const v = parseCtxTokens(cs);
-        if (isNaN(v)) return {err: `「${n}」的覆盖上下文不合法：${cs}（支持 128k、1.5m 简写）`};
+      if (csRaw) {
+        const v = ctxGrpVal(c.querySelector('.ctxgrp'));
+        if (isNaN(v)) return {err: `「${n}」的覆盖上下文数值不合法（需为正数）`};
         t.contextWindow = v;
       }
       virtualModels[n] = t;
@@ -784,12 +806,13 @@ const ui = {
 
     const routing = {virtualModels, defaultVirtual: def || ''};
     if ($('#uEnable').checked) {
-      const ctx = parseCtxTokens($('#uCtx').value.trim());
-      if ($('#uCtx').value.trim() && isNaN(ctx)) return {err: '辅助模型上下文不合法：'+$('#uCtx').value};
+      const uCtxRaw = $('#uCtxG input').value.trim();
+      const uCtx = uCtxRaw ? ctxGrpVal($('#uCtxG')) : 0;
+      if (uCtxRaw && (isNaN(uCtx) || uCtx <= 0)) return {err: '辅助模型上下文数值不合法（需为正数）'};
       routing.utility = {
         provider: $('#uProvider').value,
         model: $('#uModel').value,
-        ...(ctx > 0 ? {contextWindow: ctx} : {}),
+        ...(uCtx > 0 ? {contextWindow: uCtx} : {}),
       };
     }
     const pats = $('#uPatterns').value.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
