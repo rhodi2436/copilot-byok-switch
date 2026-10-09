@@ -3,6 +3,7 @@
 package winenv
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,5 +77,56 @@ func TestDarwinUserEnvRoundtrip(t *testing.T) {
 
 	if !TraySupported() {
 		t.Fatal("darwin 应启用托盘")
+	}
+}
+
+func TestInjectUpgradeRestoresNewVariables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".zshrc")
+	orig := zshrcPath
+	zshrcPath = func() string { return path }
+	defer func() { zshrcPath = orig }()
+
+	if err := SetUserEnv("no_proxy", "corp.example"); err != nil {
+		t.Fatal(err)
+	}
+	backupPath := filepath.Join(t.TempDir(), "env-backup.json")
+	if err := InjectEnv(backupPath, map[string]string{"COPILOT_MODEL": "cops-active"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := InjectEnv(backupPath, map[string]string{
+		"COPILOT_MODEL": "cops-active",
+		"NO_PROXY":      "corp.example,localhost,127.0.0.1,::1",
+		"no_proxy":      "corp.example,localhost,127.0.0.1,::1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var backup EnvBackup
+	if err := json.Unmarshal(data, &backup); err != nil {
+		t.Fatal(err)
+	}
+	if entry := backup.Vars["no_proxy"]; !entry.Exists || entry.Value != "corp.example" {
+		t.Fatalf("extended backup no_proxy = %+v, want original corp.example", entry)
+	}
+	if entry := backup.Vars["NO_PROXY"]; entry.Exists {
+		t.Fatalf("extended backup NO_PROXY = %+v, want originally absent", entry)
+	}
+
+	restored, err := RestoreEnv(backupPath)
+	if err != nil || !restored {
+		t.Fatalf("RestoreEnv = %v, %v", restored, err)
+	}
+	if value, ok := GetUserEnv("no_proxy"); !ok || value != "corp.example" {
+		t.Fatalf("restored no_proxy = %q, %v; want corp.example", value, ok)
+	}
+	if _, ok := GetUserEnv("NO_PROXY"); ok {
+		t.Fatal("NO_PROXY should be removed after restore")
+	}
+	if value, ok := GetUserEnv("COPILOT_MODEL"); ok {
+		t.Fatalf("newly injected COPILOT_MODEL should be removed, got %q", value)
 	}
 }

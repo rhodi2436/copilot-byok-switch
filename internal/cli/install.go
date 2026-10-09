@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -21,17 +22,66 @@ const (
 	envProviderBaseURL = "COPILOT_PROVIDER_BASE_URL"
 	envProviderAPIKey  = "COPILOT_PROVIDER_API_KEY"
 	envModel           = "COPILOT_MODEL"
+	envNoProxy         = "NO_PROXY"
+	envNoProxyLower    = "no_proxy"
 	dummyAPIKey        = "cops-local"
 )
 
-// copilotEnvVars 构建指向本地代理的 COPILOT_* 环境变量集。
+// copilotEnvVars 构建 Copilot CLI 环境变量，并确保本机代理绕过外部 HTTP 代理。
 func copilotEnvVars(cfg *config.Config) map[string]string {
-	return map[string]string{
+	vars := map[string]string{
 		envProviderType:    "openai",
 		envProviderBaseURL: cfg.PublicURL(),
 		envProviderAPIKey:  dummyAPIKey,
 		envModel:           cfg.VirtualModel,
 	}
+	for name, value := range localProxyEnvVars() {
+		vars[name] = value
+	}
+	return vars
+}
+
+func localProxyEnvVars() map[string]string {
+	upper, _ := winenv.GetUserEnv(envNoProxy)
+	lower, _ := winenv.GetUserEnv(envNoProxyLower)
+	noProxy := mergeNoProxy(os.Getenv(envNoProxy), os.Getenv(envNoProxyLower), upper, lower)
+	return map[string]string{
+		envNoProxy:      noProxy,
+		envNoProxyLower: noProxy,
+	}
+}
+
+func mergeNoProxy(values ...string) string {
+	entries := make([]string, 0, len(values)+3)
+	seen := make(map[string]struct{}, len(values)+3)
+	for _, value := range values {
+		for _, entry := range strings.Split(value, ",") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			key := strings.ToLower(entry)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			entries = append(entries, entry)
+		}
+	}
+	for _, host := range []string{"localhost", "127.0.0.1", "::1"} {
+		if _, ok := seen[host]; !ok {
+			entries = append(entries, host)
+		}
+	}
+	return strings.Join(entries, ",")
+}
+
+func hasLoopbackNoProxy(value string) bool {
+	found := make(map[string]bool, 3)
+	for _, entry := range strings.Split(value, ",") {
+		found[strings.ToLower(strings.TrimSpace(entry))] = true
+	}
+	return found["localhost"] && found["127.0.0.1"] && found["::1"]
 }
 
 // copilotEnvNames COPILOT_* 变量名列表。
@@ -44,7 +94,8 @@ var installCmd = &cobra.Command{
 	Short: "一键安装：注入 COPILOT_* 环境变量（带备份）+ 设置托盘开机自启",
 	Long: `将 Copilot CLI 指向本地 cops 代理：
   1. 注入用户环境变量 COPILOT_PROVIDER_TYPE / BASE_URL / API_KEY / MODEL
-     （自动备份原值到 ~/.cops/env-backup.json，cops tray 退出或 uninstall 时恢复）
+	     并将本机回环地址加入 NO_PROXY/no_proxy（保留已有规则）
+	     （自动备份原值到 ~/.cops/env-backup.json，cops tray 退出或 uninstall 时恢复）
 	  2. 写入平台对应的用户环境配置（新开终端即可生效，已开终端需重开）
 	  3. 设置用户级开机自启动 cops tray（托盘常驻 + 启动即注入 + 退出即恢复）
 
@@ -82,9 +133,10 @@ var installCmd = &cobra.Command{
 		fmt.Println("✅ 安装完成！")
 		fmt.Println()
 		fmt.Println("已注入用户环境变量（原值已备份，可随时恢复）：")
-		for k, v := range vars {
-			fmt.Printf("  %s=%s\n", k, v)
+		for _, name := range copilotEnvNames() {
+			fmt.Printf("  %s=%s\n", name, vars[name])
 		}
+		fmt.Println("  NO_PROXY/no_proxy 已包含 localhost、127.0.0.1、::1，并保留原有绕过规则")
 		fmt.Println()
 		fmt.Println("下一步：")
 		if runtime.GOOS == "darwin" {
@@ -107,7 +159,7 @@ var installCmd = &cobra.Command{
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "卸载：恢复 COPILOT_* 环境变量、清理开机自启（保留 ~/.cops 配置与数据）",
+	Short: "卸载：恢复 Copilot 与代理环境变量、清理开机自启（保留 ~/.cops 配置与数据）",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		restored, err := winenv.RestoreEnv(config.EnvBackupPath())
 		if err != nil {
@@ -140,20 +192,23 @@ var injectCmd = &cobra.Command{
 			return err
 		}
 		if winenv.IsInjected(config.EnvBackupPath()) {
-			fmt.Println("已处于注入状态（备份存在）；如需刷新值请先 cops restore。")
+			if err := winenv.InjectEnv(config.EnvBackupPath(), localProxyEnvVars()); err != nil {
+				return fmt.Errorf("更新本机代理绕过规则失败: %w", err)
+			}
+			fmt.Println("已处于注入状态；已确保 NO_PROXY/no_proxy 绕过本机代理。新开终端后生效。")
 			return nil
 		}
 		if err := winenv.InjectEnv(config.EnvBackupPath(), copilotEnvVars(cfg)); err != nil {
 			return err
 		}
-		fmt.Println("✅ 已注入 COPILOT_* 环境变量（原值已备份）。新开终端后生效。")
+		fmt.Println("✅ 已注入 Copilot 与本机代理环境变量（原值已备份）。新开终端后生效。")
 		return nil
 	},
 }
 
 var restoreCmd = &cobra.Command{
 	Use:   "restore",
-	Short: "恢复注入前的 COPILOT_* 环境变量（托盘退出时也会自动执行）",
+	Short: "恢复注入前的 Copilot 与代理环境变量（托盘退出时也会自动执行）",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		restored, err := winenv.RestoreEnv(config.EnvBackupPath())
 		if err != nil {
@@ -237,6 +292,12 @@ var doctorCmd = &cobra.Command{
 					}
 				}
 				check(true, fmt.Sprintf("注入状态: 已注入（备份原值 %d 项，cops tray 退出时自动恢复）", n), "")
+			}
+			for _, name := range []string{envNoProxy, envNoProxyLower} {
+				value, exists := winenv.GetUserEnv(name)
+				pass := exists && hasLoopbackNoProxy(value)
+				check(pass, fmt.Sprintf("环境变量 %s 包含本机代理绕过规则", name),
+					"运行 cops inject 更新注入；再开终端后重试 Copilot")
 			}
 		} else {
 			check(true, "注入状态: 未注入（cops tray 启动时会自动注入）", "")

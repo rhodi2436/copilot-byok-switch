@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // BackupEntry 单个变量的注入前状态。
@@ -26,9 +27,9 @@ func IsInjected(backupPath string) bool {
 }
 
 // InjectEnv 写入 vars 前先备份原值（幂等：已有备份则保留最早的原值，
-// 防止二次启动覆盖原始状态），然后写入并广播。
-// 备份以 O_CREATE|O_EXCL 原子创建：并发调用（如托盘开关与 CLI 同时执行）时
-// 只有一个赢家，其余视为"已有备份"，避免互相覆盖原值。
+// 防止二次启动覆盖原始状态），然后写入并广播。已有备份会补充新注入变量的原值，
+// 以便升级后恢复新增的环境变量。
+// 备份以 O_CREATE|O_EXCL 原子创建，避免并发调用覆盖最早的原值。
 func InjectEnv(backupPath string, vars map[string]string) error {
 	if err := createBackupIfAbsent(backupPath, vars); err != nil {
 		return err
@@ -42,7 +43,7 @@ func InjectEnv(backupPath string, vars map[string]string) error {
 	return nil
 }
 
-// createBackupIfAbsent 原子创建备份（已存在则跳过）。
+// createBackupIfAbsent 原子创建备份；已存在时仅补充缺失的变量。
 // 注意：Windows 上句柄未关闭时无法删除文件（Go 打开不带 FILE_SHARE_DELETE），
 // 因此失败路径必须先 Close 再 Remove，否则清理是无效操作。
 func createBackupIfAbsent(backupPath string, vars map[string]string) error {
@@ -51,7 +52,7 @@ func createBackupIfAbsent(backupPath string, vars map[string]string) error {
 	}
 	f, err := os.OpenFile(backupPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if os.IsExist(err) {
-		return nil // 已有备份，保留最早原值
+		return extendBackup(backupPath, vars)
 	}
 	if err != nil {
 		return err
@@ -74,6 +75,66 @@ func createBackupIfAbsent(backupPath string, vars map[string]string) error {
 		return abandon(err)
 	}
 	return f.Close()
+}
+
+// extendBackup 为升级后新增注入的变量补充原值，保留已有备份项不变。
+func extendBackup(backupPath string, vars map[string]string) error {
+	var backup EnvBackup
+	var data []byte
+	var err error
+	for attempt := 0; attempt < 50; attempt++ {
+		data, err = os.ReadFile(backupPath)
+		if err != nil {
+			return err
+		}
+		if err = json.Unmarshal(data, &backup); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		return err
+	}
+	if backup.Vars == nil {
+		backup.Vars = make(map[string]BackupEntry)
+	}
+	changed := false
+	for name := range vars {
+		if _, exists := backup.Vars[name]; exists {
+			continue
+		}
+		value, exists := GetUserEnv(name)
+		backup.Vars[name] = BackupEntry{Value: value, Exists: exists}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	data, err = json.MarshalIndent(&backup, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(backupPath), ".env-backup-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), backupPath)
 }
 
 // RestoreEnv 按备份还原变量并删除备份；无备份（未注入）时返回 false 且不做任何事。

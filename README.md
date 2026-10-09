@@ -98,7 +98,7 @@ mv cops "$HOME/.local/bin/cops"
 
 也可解压 `cops-macos-universal-app.zip`，将 `Cops.app` 移入 `/Applications` 后双击启动；应用以菜单栏常驻，不在 Dock 显示。首次启动后可用菜单栏图标管理供应商、模型和注入状态。`cops install` 会安装并加载 `~/Library/LaunchAgents/com.cops.tray.plist`，因此托盘会立即启动，并在之后登录时自动启动；不要再重复运行 `cops tray`。
 
-- **环境变量**：cops 在 `~/.zshrc` 中维护 `# >>> cops >>>` 标记块；`cops install` / `cops inject` 注入，退出托盘、`cops restore` 或 `cops uninstall` 恢复。仅对新启动的 zsh 终端生效。
+- **环境变量**：cops 在 `~/.zshrc` 中维护 `# >>> cops >>>` 标记块；`cops install` / `cops inject` 注入，退出托盘、`cops restore` 或 `cops uninstall` 恢复。注入时会保留已有 `NO_PROXY`/`no_proxy` 规则，并添加 `localhost`、`127.0.0.1`、`::1`，避免 Copilot 访问本机代理时被外部 HTTP 代理拦截。仅对新启动的 zsh 终端生效。
 - **构建**：本机构建需 Xcode Command Line Tools（`xcode-select --install`）和 Go 1.26+；GitHub Actions 发布 arm64 + amd64 universal binary 与 `.app`。
 - **首次运行**：发布包未经过 Apple notarization；若 Gatekeeper 阻止打开，请在系统设置「隐私与安全性」中允许，或在 Finder 中右键应用并选择「打开」。
 
