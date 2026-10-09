@@ -136,7 +136,7 @@ func TestParseContextWindow(t *testing.T) {
 
 func TestModelContextValidateAndNormalize(t *testing.T) {
 	p := Provider{Name: "x", BaseURL: "https://a.com",
-		ModelContext: map[string]int{"m1": 128000, "m2": -1, " ": 100}}
+		ModelContext: map[string]int{"m1": 128000, "m2": -1}}
 	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "正整数") {
 		t.Fatalf("negative context should be rejected, got %v", err)
 	}
@@ -144,6 +144,12 @@ func TestModelContextValidateAndNormalize(t *testing.T) {
 	if err := p.Validate(); err == nil {
 		t.Fatal("zero context should also be rejected by Validate")
 	}
+	delete(p.ModelContext, "m2")
+	p.ModelContext[" "] = 100
+	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "空模型名") {
+		t.Fatalf("blank model name should be rejected, got %v", err)
+	}
+	p.ModelContext["m2"] = 0 // 与 " " 一并交给清洗
 	p.cleanModelContext()
 	if _, ok := p.ModelContext["m2"]; ok {
 		t.Error("zero context entry should be cleaned by fillDefaults")
@@ -161,7 +167,8 @@ func TestModelContextRoundtrip(t *testing.T) {
 	c := Default()
 	c.Providers = []Provider{{
 		Name: "glm", BaseURL: "https://open.bigmodel.cn/api/paas/v4",
-		ModelContext: map[string]int{"glm-4.7": 128000, "glm-4-flash": 8000},
+		ModelContext:  map[string]int{"glm-4.7": 128000, "glm-4-flash": 8000},
+		ModelMaxOutput: map[string]int{"glm-4.7": 8192, "glm-4-flash": 4096, "stale": 0},
 	}}
 	c.Active = "glm"
 	if err := c.Save(); err != nil {
@@ -173,6 +180,24 @@ func TestModelContextRoundtrip(t *testing.T) {
 	}
 	if got.Providers[0].ModelContext["glm-4.7"] != 128000 || got.Providers[0].ModelContext["glm-4-flash"] != 8000 {
 		t.Fatalf("modelContext roundtrip mismatch: %+v", got.Providers[0].ModelContext)
+	}
+	if got.Providers[0].ModelMaxOutput["glm-4.7"] != 8192 || got.Providers[0].ModelMaxOutput["glm-4-flash"] != 4096 {
+		t.Fatalf("modelMaxOutput roundtrip mismatch: %+v", got.Providers[0].ModelMaxOutput)
+	}
+	if _, ok := got.Providers[0].ModelMaxOutput["stale"]; ok {
+		t.Fatal("非正值 modelMaxOutput 条目应被清洗")
+	}
+}
+
+func TestModelMaxOutputValidate(t *testing.T) {
+	p := Provider{Name: "x", BaseURL: "https://a.com",
+		ModelMaxOutput: map[string]int{"m1": 8192, "m2": -1}}
+	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "最大输出") {
+		t.Fatalf("negative max output should be rejected, got %v", err)
+	}
+	p.ModelMaxOutput["m2"] = 4096
+	if err := p.Validate(); err != nil {
+		t.Fatalf("valid max output rejected: %v", err)
 	}
 }
 

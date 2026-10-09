@@ -331,6 +331,22 @@ func (s *Server) rewriteBody(body []byte, p *config.Provider, targetModel string
 			}
 		}
 	}
+	// 模型配置了最大输出 token 时，把请求中的 max_tokens / max_completion_tokens
+	// 钳制到上限：CLI 每请求固定发送 max_tokens（实测 2048，随任务类型变化），
+	// 超过真实模型输出上限时部分上游直接 400。passthrough（targetModel 为空）
+	// 时用请求原始模型名查表。
+	effModel := targetModel
+	if effModel == "" {
+		effModel, _ = m["model"].(string)
+	}
+	if mo := p.ModelMaxOutput[effModel]; mo > 0 {
+		for _, k := range []string{"max_tokens", "max_completion_tokens"} {
+			if v, ok := m[k].(float64); ok && v > float64(mo) {
+				m[k] = float64(mo)
+				changed = true
+			}
+		}
+	}
 	if stream, _ := m["stream"].(bool); stream && !p.NoUsageInjection {
 		if _, exists := m["stream_options"]; !exists {
 			m["stream_options"] = map[string]any{"include_usage": true}
@@ -359,36 +375,39 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request, cfg *confi
 	type item struct {
 		id, target string
 		ctxWin     int
+		moWin      int
 	}
 	var list []item
 	seen := map[string]bool{}
-	add := func(id, target string, ctxWin int) {
+	add := func(id, target string, ctxWin, moWin int) {
 		if id == "" || seen[id] {
 			return
 		}
 		seen[id] = true
-		list = append(list, item{id, target, ctxWin})
+		list = append(list, item{id, target, ctxWin, moWin})
 	}
 
 	// 钉住名（COPILOT_MODEL 指向它），标注其默认去向与生效上下文
 	// （DefaultVirtual 表项 > 激活供应商默认模型；passthrough 无已知值）。
 	if cfg.VirtualModel != "" && (p == nil || !p.PassthroughModel) {
-		pinCtx := 0
+		pinCtx, pinMo := 0, 0
 		if t, ok := cfg.Routing.VirtualModels[cfg.Routing.DefaultVirtual]; ok && cfg.Routing.DefaultVirtual != "" {
 			pinCtx = cfg.TargetContext(t)
+			pinMo = cfg.TargetMaxOutput(t)
 		} else if p != nil {
 			pinCtx = p.ModelContext[p.Model]
+			pinMo = p.ModelMaxOutput[p.Model]
 		}
-		add(cfg.VirtualModel, defaultTargetAnnotation(cfg, p), pinCtx)
+		add(cfg.VirtualModel, defaultTargetAnnotation(cfg, p), pinCtx, pinMo)
 	}
 	for _, name := range cfg.Routing.SortedVirtualModels() {
 		t := cfg.Routing.VirtualModels[name]
-		add(name, t.Provider+"/"+t.Model, cfg.TargetContext(t))
+		add(name, t.Provider+"/"+t.Model, cfg.TargetContext(t), cfg.TargetMaxOutput(t))
 	}
 	if p != nil {
-		add(p.Model, "", p.ModelContext[p.Model])
+		add(p.Model, "", p.ModelContext[p.Model], p.ModelMaxOutput[p.Model])
 		for _, m := range p.Models {
-			add(m, "", p.ModelContext[m])
+			add(m, "", p.ModelContext[m], p.ModelMaxOutput[m])
 		}
 	}
 
@@ -418,6 +437,9 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request, cfg *confi
 		}
 		if it.ctxWin > 0 {
 			m["context_length"] = it.ctxWin
+		}
+		if it.moWin > 0 {
+			m["max_output_tokens"] = it.moWin
 		}
 		data = append(data, m)
 	}

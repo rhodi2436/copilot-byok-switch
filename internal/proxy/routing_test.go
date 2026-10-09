@@ -56,6 +56,14 @@ func (u *upstreamRecorder) authHeader() string {
 	return u.auth
 }
 
+// floatField 读取上游收到的请求体数值字段。
+func (u *upstreamRecorder) floatField(k string) (float64, bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	v, ok := u.body[k].(float64)
+	return v, ok
+}
+
 func (u *upstreamRecorder) newServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -209,6 +217,49 @@ func TestStripSampling(t *testing.T) {
 	}
 }
 
+func TestMaxOutputClamp(t *testing.T) {
+	ts, recA, _ := newRoutedProxy(t, func(c *config.Config) {
+		c.Providers[0].ModelMaxOutput = map[string]int{"a-model": 8192}
+	})
+	// 超限 → 钳制到 8192（max_tokens 与 max_completion_tokens 一并处理）。
+	postChat(t, ts, `{"model":"a-model","max_tokens":100000,"max_completion_tokens":999999,"messages":[]}`)
+	if v, _ := recA.floatField("max_tokens"); v != 8192 {
+		t.Fatalf("max_tokens = %v, want 8192", v)
+	}
+	if v, _ := recA.floatField("max_completion_tokens"); v != 8192 {
+		t.Fatalf("max_completion_tokens = %v, want 8192", v)
+	}
+	// 未超限 → 原样保留；缺失 → 不注入。
+	postChat(t, ts, `{"model":"a-model","max_tokens":4096,"messages":[]}`)
+	if v, _ := recA.floatField("max_tokens"); v != 4096 {
+		t.Fatalf("max_tokens = %v, want 4096（未超限不应改写）", v)
+	}
+	postChat(t, ts, `{"model":"a-model","messages":[]}`)
+	if _, ok := recA.floatField("max_tokens"); ok {
+		t.Fatal("缺失 max_tokens 时不应注入")
+	}
+	// 未配置上限的模型 → 不改写（路由到 b/b-model，b 无 ModelMaxOutput）。
+	tsB, _, recB := newRoutedProxy(t, func(c *config.Config) {
+		c.Providers[0].ModelMaxOutput = map[string]int{"a-model": 8192}
+		c.Routing.VirtualModels = map[string]config.RouteTarget{
+			"cops-x": {Provider: "b", Model: "b-model"},
+		}
+	})
+	postChat(t, tsB, `{"model":"cops-x","max_tokens":100000,"messages":[]}`)
+	if v, _ := recB.floatField("max_tokens"); v != 100000 {
+		t.Fatalf("未配置上限的模型不应钳制, got %v", v)
+	}
+	// passthrough：按请求原始模型名查表。
+	ts2, recA2, _ := newRoutedProxy(t, func(c *config.Config) {
+		c.Providers[0].PassthroughModel = true
+		c.Providers[0].ModelMaxOutput = map[string]int{"raw-name": 2048}
+	})
+	postChat(t, ts2, `{"model":"raw-name","max_tokens":65536,"messages":[]}`)
+	if v, _ := recA2.floatField("max_tokens"); v != 2048 {
+		t.Fatalf("passthrough 钳制 = %v, want 2048", v)
+	}
+}
+
 func TestModelsListWithVirtualNames(t *testing.T) {
 	ts, _, _ := newRoutedProxy(t, func(c *config.Config) {
 		c.Providers[0].Models = []string{"a-lite"}
@@ -256,6 +307,8 @@ func TestModelsContextLength(t *testing.T) {
 		c.Providers[0].Models = []string{"a-lite"}
 		c.Providers[0].ModelContext = map[string]int{"a-model": 96000, "a-lite": 8000}
 		c.Providers[1].ModelContext = map[string]int{"b-pro": 128000}
+		c.Providers[0].ModelMaxOutput = map[string]int{"a-model": 8192}
+		c.Providers[1].ModelMaxOutput = map[string]int{"b-pro": 4096}
 		c.Routing.VirtualModels = map[string]config.RouteTarget{
 			"cops-pro":   {Provider: "b", Model: "b-pro", ContextWindow: 200000}, // 覆盖值优先
 			"cops-flash": {Provider: "b", Model: "b-pro"},                        // 回退真实值 128000
@@ -271,12 +324,15 @@ func TestModelsContextLength(t *testing.T) {
 		Data []struct {
 			ID     string `json:"id"`
 			CtxLen *int   `json:"context_length"`
+			MaxOut *int   `json:"max_output_tokens"`
 		} `json:"data"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	byID := map[string]*int{}
+	maxOut := map[string]*int{}
 	for _, d := range out.Data {
 		byID[d.ID] = d.CtxLen
+		maxOut[d.ID] = d.MaxOut
 	}
 	want := map[string]int{
 		"cops-pro":    200000,
@@ -293,6 +349,16 @@ func TestModelsContextLength(t *testing.T) {
 	}
 	if byID["cops-ghost"] != nil {
 		t.Errorf("未知真实模型不应带 context_length: %v", *byID["cops-ghost"])
+	}
+	// max_output_tokens 同样回退目标供应商真实模型配置。
+	for id, n := range map[string]int{"a-model": 8192, "cops-pro": 4096, "cops-flash": 4096} {
+		got := maxOut[id]
+		if got == nil || *got != n {
+			t.Errorf("%s max_output_tokens = %v, want %d", id, got, n)
+		}
+	}
+	if maxOut["a-lite"] != nil || maxOut["cops-ghost"] != nil {
+		t.Errorf("未配置最大输出的条目不应带字段: a-lite=%v cops-ghost=%v", maxOut["a-lite"], maxOut["cops-ghost"])
 	}
 }
 

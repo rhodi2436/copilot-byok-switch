@@ -34,6 +34,11 @@ type Provider struct {
 	// ModelContext 各真实模型的上下文窗口（token 数），用于 /v1/models 元数据
 	// 与展示；虚拟模型未单独覆盖时回退到这里。
 	ModelContext map[string]int `json:"modelContext,omitempty"`
+	// ModelMaxOutput 各真实模型的最大输出 token 数。请求中的 max_tokens /
+	// max_completion_tokens 超出该值时被钳制到上限：Copilot CLI 每请求固定
+	// 发送 max_tokens，超过真实模型输出上限时部分上游直接返回 400。
+	// 0/未配置 = 不限制。
+	ModelMaxOutput map[string]int `json:"modelMaxOutput,omitempty"`
 	Prices   map[string]ModelPrice `json:"prices,omitempty"`
 	ExtraHeaders map[string]string `json:"extraHeaders,omitempty"`
 	TimeoutSec   int    `json:"timeoutSec,omitempty"`    // 上游请求超时（秒），默认 600
@@ -142,6 +147,7 @@ func (c *Config) fillDefaults() {
 	}
 	for i := range c.Providers {
 		c.Providers[i].cleanModelContext()
+		cleanPosIntMap(&c.Providers[i].ModelMaxOutput)
 	}
 	c.Routing.Normalize()
 }
@@ -241,20 +247,34 @@ func (p *Provider) Validate() error {
 			return fmt.Errorf("模型 %q 的上下文窗口必须为正整数: %d", m, n)
 		}
 	}
+	for m, n := range p.ModelMaxOutput {
+		if strings.TrimSpace(m) == "" {
+			return fmt.Errorf("模型最大输出存在空模型名")
+		}
+		if n <= 0 {
+			return fmt.Errorf("模型 %q 的最大输出必须为正整数: %d", m, n)
+		}
+	}
 	return nil
 }
 
 // cleanModelContext 清洗模型上下文表：trim 键、去除空键与非正值条目（幂等）。
 func (p *Provider) cleanModelContext() {
-	for k, v := range p.ModelContext {
+	cleanPosIntMap(&p.ModelContext)
+}
+
+// cleanPosIntMap 就地清洗「模型名 → 正整数」映射：trim 键、去除空键与非正值
+// 条目（幂等），供 ModelContext / ModelMaxOutput 共用。
+func cleanPosIntMap(m *map[string]int) {
+	for k, v := range *m {
 		nk := strings.TrimSpace(k)
 		if nk == "" || v <= 0 {
-			delete(p.ModelContext, k)
+			delete(*m, k)
 			continue
 		}
 		if nk != k {
-			delete(p.ModelContext, k)
-			p.ModelContext[nk] = v
+			delete(*m, k)
+			(*m)[nk] = v
 		}
 	}
 }

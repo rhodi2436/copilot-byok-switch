@@ -120,6 +120,15 @@ func (c *Config) TargetContext(t RouteTarget) int {
 	return 0
 }
 
+// TargetMaxOutput 返回路由目标真实模型的最大输出 token 数
+// （回退目标供应商 ModelMaxOutput；未配置返回 0 = 不限制）。
+func (c *Config) TargetMaxOutput(t RouteTarget) int {
+	if p, _ := c.Find(t.Provider); p != nil {
+		return p.ModelMaxOutput[t.Model]
+	}
+	return 0
+}
+
 // validateTarget 校验单个路由目标。
 func (c *Config) validateTarget(where string, t RouteTarget) error {
 	if strings.TrimSpace(t.Provider) == "" {

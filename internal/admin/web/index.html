@@ -160,7 +160,7 @@
   /* ── 弹窗（蒙层点击不关闭）──────────── */
   .ovl{position:fixed;inset:0;background:rgba(5,4,15,.7);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:50}
   .ovl.show{display:flex}
-  .dlg{background:#14112e;border:1px solid var(--line2);border-radius:16px;padding:0;width:min(620px,94vw);max-height:88vh;overflow:auto;box-shadow:0 0 40px rgba(124,77,255,.25),0 24px 60px rgba(0,0,0,.5)}
+  .dlg{background:#14112e;border:1px solid var(--line2);border-radius:16px;padding:0;width:min(740px,94vw);max-height:88vh;overflow:auto;box-shadow:0 0 40px rgba(124,77,255,.25),0 24px 60px rgba(0,0,0,.5)}
   .dlg .dh{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#14112e;z-index:2}
   .dlg .dh h3{margin:0;font-size:15px;letter-spacing:.5px}
   .dlg .x{background:none;border:0;color:var(--faint);font-size:18px;cursor:pointer;padding:2px 8px;border-radius:6px}
@@ -179,7 +179,7 @@
   .tag{display:inline-flex;align-items:center;background:rgba(124,77,255,.18);border:1px solid rgba(124,77,255,.45);border-radius:6px;padding:2px 4px 2px 9px;font-size:12px;font-family:var(--mono);color:#d9ccff}
   .tag i{cursor:pointer;margin-left:6px;font-style:normal;color:var(--faint);border-radius:4px;padding:0 4px}
   .tag i:hover{color:var(--err)}
-  .mcr{display:grid;grid-template-columns:1fr 190px 34px;gap:8px;margin-top:8px}
+  .mcr{display:grid;grid-template-columns:1fr 170px 170px 34px;gap:8px;margin-top:8px}
   .mcr button{background:transparent;border:1px solid #5b2b47;color:var(--err);border-radius:7px;cursor:pointer;font-size:12px}
   .mcr button:hover{border-color:var(--err)}
 
@@ -321,9 +321,9 @@
       <label>模型清单（回车添加，退格删除标签）</label>
       <div class="chipin" id="chipBox"><input id="chipIn" placeholder="输入模型名后回车，如 glm-4-flash"></div>
       <datalist id="chipDl"></datalist>
-      <label>模型上下文（逐模型设置，数值 × 单位）</label>
+      <label>模型性能参数（逐模型：上下文必填、最大输出可留空，均为数值 × 单位）</label>
       <div id="mcRows"></div>
-      <button class="btn mini" type="button" onclick="ui.addMcRow()">＋ 添加模型上下文</button>
+      <button class="btn mini" type="button" onclick="ui.addMcRow()">＋ 添加模型参数</button>
       <label>价格：每百万 tokens 输入 / 输出（可选，用于费用估算）</label>
       <div class="frow">
         <input id="fPriceIn" type="number" step="any" class="in" placeholder="输入单价">
@@ -355,13 +355,13 @@ const splitCtx = n => {
   if (n >= 1e3) return {num: +((n/1e3).toFixed(2)), unit: 1000};
   return {num: n, unit: 1};
 };
-const ctxInner = (cls, n) => {
+const ctxInner = (cls, n, label = '上下文窗口') => {
   const s = splitCtx(n || 0);
   const u = s ? s.unit : 1000;
-  return `<input type="number" min="0" step="any" class="in mono ${cls}-num" placeholder="如 128" title="上下文窗口数值"${s ? ` value="${s.num}"` : ''}>` +
+  return `<input type="number" min="0" step="any" class="in mono ${cls}-num" placeholder="如 ${label === '上下文窗口' ? 128 : 8}" title="${label}数值"${s ? ` value="${s.num}"` : ''}>` +
     `<select class="in ${cls}-unit" title="单位：k = 千 tokens，m = 百万 tokens，tokens = 原始值">${CTX_UNITS.map(([v, l]) => `<option value="${v}"${u === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
 };
-const ctxGrp = (cls, n) => `<div class="ctxgrp">${ctxInner(cls, n)}</div>`;
+const ctxGrp = (cls, n, label) => `<div class="ctxgrp">${ctxInner(cls, n, label)}</div>`;
 const ctxGrpVal = el => {
   const raw = el.querySelector('input').value.trim();
   if (!raw) return 0;
@@ -597,12 +597,13 @@ const ui = {
       const el = document.createElement('div');
       el.className = 'pcard' + (p.name === this.active ? ' on' : '');
       const dctx = p.modelContext && p.modelContext[p.model] ? ' · 上下文 '+fmtCtxTokens(p.modelContext[p.model]) : '';
+      const dmo = p.modelMaxOutput && p.modelMaxOutput[p.model] ? ' · 最大输出 '+fmtCtxTokens(p.modelMaxOutput[p.model]) : '';
       el.innerHTML = `
         ${p.name === this.active ? '<span class="badge">⯑ 使用中</span>' : ''}
         <div class="name">${esc(p.name)}</div>
         <div class="meta">
           ${esc(p.baseUrl)}<br>
-          模型 <b>${esc(p.model||'—')}</b>${dctx} · Key ${esc(p.apiKey||'无')}<br>
+          模型 <b>${esc(p.model||'—')}</b>${dctx}${dmo} · Key ${esc(p.apiKey||'无')}<br>
           清单 ${(p.models||[]).length} 个${(p.models||[]).length?': '+esc(p.models.join(', ')):''}
         </div>
         <div class="acts">
@@ -630,8 +631,10 @@ const ui = {
     $('#chipIn').value = '';
     for (const m of (p ? p.models||[] : [])) this.addChip(m);
     $('#mcRows').innerHTML = '';
-    const mc = p && p.modelContext ? Object.entries(p.modelContext) : [];
-    for (const [m, v] of mc) this.addMcRow(m, v);
+    const mcMap = new Map(Object.entries(p && p.modelContext || {}));
+    const moMap = p && p.modelMaxOutput || {};
+    for (const m of Object.keys(moMap)) if (!mcMap.has(m)) mcMap.set(m, 0);
+    for (const [m, v] of mcMap) this.addMcRow(m, v, moMap[m] || 0);
     const price = p && p.prices && p.prices[p.model];
     $('#fPriceIn').value = price ? price.inputPerMillionTokens : '';
     $('#fPriceOut').value = price ? price.outputPerMillionTokens : '';
@@ -658,6 +661,8 @@ const ui = {
         m: r.querySelector('.mc-m').value.trim(),
         n: r.querySelector('.mc-num').value.trim(),
         u: r.querySelector('.mc-unit').value,
+        on: r.querySelector('.mc-mo-num').value.trim(),
+        ou: r.querySelector('.mc-mo-unit').value,
       })),
       pin: $('#fPriceIn').value, pout: $('#fPriceOut').value,
     };
@@ -676,12 +681,13 @@ const ui = {
     this.syncDatalists();
   },
 
-  addMcRow(model, ctxTokens) {
+  addMcRow(model, ctxTokens, maxOut) {
     const row = document.createElement('div');
     row.className = 'mcr';
     row.innerHTML = `
       <input class="in mono mc-m" placeholder="模型名（如 glm-4.7）" list="chipDl" value="${esc(model||'')}">
       ${ctxGrp('mc', ctxTokens || 0)}
+      ${ctxGrp('mc-mo', maxOut || 0, '最大输出')}
       <button type="button" title="删除该行">✕</button>`;
     row.querySelector('button').addEventListener('click', () => row.remove());
     $('#mcRows').appendChild(row);
@@ -701,17 +707,26 @@ const ui = {
       models: d.chips,
     };
     if (d.mc.length) {
-      const mc = {};
+      const mc = {}, mo = {};
       for (const r of d.mc) {
-        if (!r.m && !r.n) continue;
+        if (!r.m && !r.n && !r.on) continue; // 整行空白跳过
         const num = parseFloat(r.n);
         if (!r.m || !isFinite(num) || num <= 0) {
-          $('#dlgErr').textContent = `模型上下文不合法：「${r.m || '？'}」需填模型名与正数数值`;
+          $('#dlgErr').textContent = `模型参数不合法：「${r.m || '？'}」需填模型名与正数上下文`;
           return;
         }
         mc[r.m] = Math.round(num * parseFloat(r.u));
+        if (r.on) {
+          const onum = parseFloat(r.on);
+          if (!isFinite(onum) || onum <= 0) {
+            $('#dlgErr').textContent = `模型参数不合法：「${r.m}」最大输出需为正数`;
+            return;
+          }
+          mo[r.m] = Math.round(onum * parseFloat(r.ou));
+        }
       }
       if (Object.keys(mc).length) p.modelContext = mc;
+      if (Object.keys(mo).length) p.modelMaxOutput = mo;
     }
     const pin = parseFloat(d.pin), pout = parseFloat(d.pout);
     if (p.model && (pin > 0 || pout > 0)) {
