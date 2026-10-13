@@ -19,7 +19,23 @@
 
 ## 迭代 v0.3.x —— 待办小项
 
-（已清空：双击直启已实现，见上方摘要。）
+### provider 级 `COPILOT_PROVIDER_MAX_PROMPT_TOKENS` 自动注入
+
+背景调研结论（2026-10，证据：github/copilot-cli#4638、#1761、#4358、#4218 与官方 BYOK 文档）：
+
+- CLI 在**进程启动时**把 BYOK 端点凝固为一条模型能力记录（`max_prompt_tokens` / `max_output_tokens` / `max_context_window_tokens` 三字段独立），此后运行中的会话不再读取环境变量——无热更通道；
+- `MAX_PROMPT_TOKENS` 驱动客户端上下文管理：自动压缩阈值硬编码为上下文窗口的 **95%**（#1761，不可配置）；
+- CLI 不查询 BYOK 端点的 `/models`（#4358 open）——cops 在 `/v1/models` 输出的能力元数据对 CLI 自身无效；
+- 官方托管模式无此矛盾：能力按模型查服务端同步的目录，auto 模式每请求从池中选模型、压缩阈值按被选模型计算（#4218）；
+- `MAX_OUTPUT_TOKENS` 已由代理侧 `modelMaxOutput` 钳制动态度量；`MAX_PROMPT_TOKENS` 是请求发出前的客户端决策，**代理无解**，只能保证"新会话拿到正确值"。
+
+待办：
+
+- `providers[].maxPromptTokens` 配置字段（0 = 不注入该变量，沿用用户手动值）
+- switch / 激活 / tray 启动时随环境变量块一并注入与恢复
+- doctor 校验：注入值 vs 主对话路由目标（DefaultVirtual → 真实模型）的 `modelContext` 一致性，偏小提示过度压缩、偏大提示 400 风险
+- Web 弹窗与 `cops add` 表单补充该字段；README 说明"切换到上下文差异大的供应商后建议重启 CLI 会话"
+
 
 ---
 
