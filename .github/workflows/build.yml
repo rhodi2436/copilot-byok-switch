@@ -2,7 +2,7 @@ name: build
 
 on:
   push:
-    branches: [master]
+    branches: [master, dev]
     tags: ['v*']
   workflow_dispatch:
 
@@ -20,7 +20,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
           else
-            echo "VERSION=dev-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+            echo "VERSION=${GITHUB_REF_NAME}-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           fi
       - run: go vet ./...
       - run: go test ./...
@@ -46,7 +46,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
           else
-            echo "VERSION=dev-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+            echo "VERSION=${GITHUB_REF_NAME}-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           fi
       - run: go vet ./...
       - run: go test ./...
