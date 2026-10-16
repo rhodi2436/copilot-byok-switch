@@ -61,6 +61,8 @@ jobs:
           cp cops Cops.app/Contents/MacOS/cops
           chmod 755 Cops.app/Contents/MacOS/cops
           cp packaging/macos/Info.plist Cops.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Cops.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" Cops.app/Contents/Info.plist
           plutil -lint Cops.app/Contents/Info.plist
           ditto -c -k --sequesterRsrc --keepParent Cops.app cops-macos-universal-app.zip
           tar -czf cops-macos-universal.tar.gz cops
