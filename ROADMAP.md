@@ -6,7 +6,8 @@
 > **v0.2.x 上下文窗口元数据**（两级配置：`providers[].modelContext` 真实模型级 + 虚拟模型 `contextWindow` 覆盖（0=回退）；CLI/Web 支持 `128k`/`1.5m` 简写；`/v1/models` 条目输出 `context_length`（OpenRouter 惯例）供其他 OpenAI 客户端读取；亦为 v0.2.1 autoRoute 按请求规模路由备好数据基础）；
 > **v0.3.x 裸 cops 直启**（无参数 `cops` / 双击 `cops.exe` = `cops tray`：守护进程 + 托盘 + 启动即注入，已运行守护进程时自动附着；`cops --console` 保留控制台；所有子命令行为不变；双击/独占控制台启动时自我重启为无控制台分离进程，原进程立即退出，控制台窗口干净关闭——规避 Windows Terminal 下 `FreeConsole` 残留 `[process exited]` 黑窗的问题）；
 > **v0.4 macOS 支持**（`winenv_darwin.go`：环境变量经 `~/.zshrc` 标记块注入/恢复，LaunchAgent 登录自启，原生 systray；Finder 可双击 `Cops.app` 启动菜单栏常驻；GitHub Actions 构建 arm64 + amd64 universal binary 与 `.app` 并发布）；
-> **v0.3.x WebUI 修补与模型最大输出**（标签切换即时渲染 providers/routing；上下文输入统一「数值 × 单位」；新增 `providers[].modelMaxOutput` 真实模型级最大输出 token：请求中 `max_tokens`/`max_completion_tokens` 超限即被钳制（Copilot CLI 每请求固定发送 `max_tokens`，超出上游上限时部分供应商直接 400）、`/v1/models` 条目输出 `max_output_tokens`、Web 弹窗逐模型「上下文 / 最大输出」两组输入与卡片展示）。
+> **v0.3.x WebUI 修补与模型最大输出**（标签切换即时渲染 providers/routing；上下文输入统一「数值 × 单位」；新增 `providers[].modelMaxOutput` 真实模型级最大输出 token：请求中 `max_tokens`/`max_completion_tokens` 超限即被钳制（Copilot CLI 每请求固定发送 `max_tokens`，超出上游上限时部分供应商直接 400）、`/v1/models` 条目输出 `max_output_tokens`、Web 弹窗逐模型「上下文 / 最大输出」两组输入与卡片展示）；
+> **v0.3.x 版本注入与更新提示**（CI 构建以 `-ldflags -X` 注入版本号：tag 构建注入 tag 名、master 注入 `dev-<sha7>`，发布产物 `cops --version` 与 tag 一致；托盘菜单尾部显示版本项、检测到新版本出现「🆕 点击下载」项直达 GitHub Release 页；`internal/update` 包：匿名查询 GitHub latest release（启动后 10s 首查、每 24h 复查、失败静默），自研 semver 数字段比较（非 semver 版本按 0.0.0 处理，dev 构建总能收到正式版提示）；管理页顶部霓虹横幅提示新版本）。
 
 ## macOS 实机验收
 

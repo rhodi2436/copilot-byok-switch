@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,6 +26,8 @@ type daemon struct {
 	stats  *stats.Tracker
 	log    *reqlog.Logger
 	srv    *http.Server
+	// cancel 停止后台更新检查循环。
+	cancel context.CancelFunc
 }
 
 // newDaemon 组装守护进程（不监听；serve() 才阻塞监听）。
@@ -64,6 +67,11 @@ func newDaemon(cfg *config.Config, logToFile bool) (*daemon, error) {
 		_ = srv.Close()
 	}
 
+	// 后台更新检查（延迟首查，失败静默）。
+	updCtx, updCancel := context.WithCancel(context.Background())
+	d.cancel = updCancel
+	adminSrv.StartUpdateCheck(updCtx)
+
 	if logToFile {
 		f, err := os.OpenFile(filepath.Join(config.LogsDir(), "daemon.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err == nil {
@@ -85,6 +93,9 @@ func (d *daemon) serve() error {
 
 // stopDaemon 关停并落盘。
 func (d *daemon) stopDaemon() {
+	if d.cancel != nil {
+		d.cancel()
+	}
 	_ = d.stats.Flush()
 	_ = d.srv.Close()
 	d.log.Close()

@@ -3,10 +3,12 @@
 package admin
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -17,6 +19,7 @@ import (
 	"cops/internal/config"
 	"cops/internal/reqlog"
 	"cops/internal/stats"
+	"cops/internal/update"
 	"cops/internal/winenv"
 )
 
@@ -31,6 +34,8 @@ type Server struct {
 	cfgPtr *atomic.Pointer[config.Config]
 	stats  *stats.Tracker
 	log    *reqlog.Logger
+	// update 已检测到的新版本（nil 表示无更新或未检测）。
+	update atomic.Pointer[update.Release]
 	// OnShutdown 由调用方注入：收到 shutdown 请求时优雅关停守护进程。
 	OnShutdown func()
 }
@@ -38,6 +43,18 @@ type Server struct {
 // New 创建管理服务。
 func New(cfgPtr *atomic.Pointer[config.Config], st *stats.Tracker, lg *reqlog.Logger) *Server {
 	return &Server{cfgPtr: cfgPtr, stats: st, log: lg}
+}
+
+// LatestRelease 返回已检测到的新版本摘要（nil 表示无更新）。
+func (s *Server) LatestRelease() *update.Release { return s.update.Load() }
+
+// StartUpdateCheck 启动后台更新检查：延迟 10s 首查，此后每 24h 一次；
+// 失败静默（网络不可达是常态），仅记录检测到的新版本。
+func (s *Server) StartUpdateCheck(ctx context.Context) {
+	update.Loop(ctx, Version, 10*time.Second, 24*time.Hour, func(r *update.Release) {
+		s.update.Store(r)
+		log.Printf("检测到新版本 %s：%s", r.Version, r.URL)
+	})
 }
 
 // Register 挂载到 mux。
@@ -108,6 +125,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp["routing"] = routing
+	if u := s.update.Load(); u != nil {
+		resp["update"] = map[string]string{"version": u.Version, "url": u.URL}
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

@@ -8,8 +8,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version 版本号（构建时可用 -ldflags 覆盖）。
-var Version = "0.2.0"
+// Version 版本号：CI 构建用 -ldflags 注入（tag 构建注入 tag 名，
+// master 注入 dev-<sha7>）；本地 go build 为 "dev"。
+var Version = "dev"
 
 // trayRunE 裸 cops 的委托目标；包级变量便于测试替换。
 var trayRunE = func(cmd *cobra.Command, args []string) error {

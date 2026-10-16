@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"cops/internal/admin"
 	"cops/internal/config"
 	"cops/internal/tray"
 	"cops/internal/winenv"
@@ -173,7 +174,12 @@ var trayCmd = &cobra.Command{
 			UseModel:     useModel,
 			OpenAdmin:    openAdmin,
 			ToggleInject: toggleInject,
-			Quit:         quit,
+			OpenRelease: func(url string) {
+				if err := openBrowser(url); err != nil {
+					log.Printf("打开下载页失败: %v", err)
+				}
+			},
+			Quit: quit,
 		})
 		quit() // 兜底：onExit 路径未触发 quit 时确保清理
 		return nil
@@ -189,6 +195,10 @@ func trayState(d *daemon, baseURL string) tray.State {
 			Injected:       winenv.IsInjected(config.EnvBackupPath()),
 			Providers:      make([]tray.ProviderInfo, 0, len(cfg.Providers)),
 			DefaultVirtual: cfg.Routing.DefaultVirtual,
+			Version:        admin.Version,
+		}
+		if u := d.admin.LatestRelease(); u != nil {
+			st.Update = &tray.UpdateInfo{Version: u.Version, URL: u.URL}
 		}
 		for _, p := range cfg.Providers {
 			st.Providers = append(st.Providers, tray.ProviderInfo{Name: p.Name, Model: p.Model})
@@ -202,6 +212,22 @@ func trayState(d *daemon, baseURL string) tray.State {
 
 	client := &http.Client{Timeout: 2 * time.Second}
 	st := tray.State{Injected: winenv.IsInjected(config.EnvBackupPath())}
+	if resp, err := client.Get(baseURL + "/_cops/api/status"); err == nil {
+		defer resp.Body.Close()
+		var out struct {
+			Version string `json:"version"`
+			Update  *struct {
+				Version string `json:"version"`
+				URL     string `json:"url"`
+			} `json:"update"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&out) == nil {
+			st.Version = out.Version
+			if out.Update != nil {
+				st.Update = &tray.UpdateInfo{Version: out.Update.Version, URL: out.Update.URL}
+			}
+		}
+	}
 	if resp, err := client.Get(baseURL + "/_cops/api/providers"); err == nil {
 		defer resp.Body.Close()
 		var out struct {

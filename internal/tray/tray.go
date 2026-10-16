@@ -39,6 +39,14 @@ type State struct {
 	DefaultVirtual string
 	VirtualModels  []ModelInfo
 	Injected       bool
+	Version        string      // 当前运行版本
+	Update         *UpdateInfo // 新版本提示（nil 表示无更新）
+}
+
+// UpdateInfo 检测到的新版本摘要。
+type UpdateInfo struct {
+	Version string
+	URL     string
 }
 
 // Signature 状态签名：变化则重建菜单。
@@ -53,6 +61,12 @@ func (s State) Signature() string {
 		b.WriteString("1")
 	} else {
 		b.WriteString("0")
+	}
+	b.WriteString(";v=")
+	b.WriteString(s.Version)
+	b.WriteString(";u=")
+	if s.Update != nil {
+		b.WriteString(s.Update.Version)
 	}
 	for _, p := range s.Providers {
 		b.WriteString(";p=")
@@ -98,7 +112,8 @@ type Actions struct {
 	UseModel     func(name string) error // 切换默认虚拟模型（v0.2）
 	OpenAdmin    func()
 	ToggleInject func() error // 幂等切换：已注入→恢复，未注入→注入
-	Quit         func()       // 完整退出编排（恢复+停代理+退出托盘）
+	OpenRelease  func(url string)
+	Quit         func() // 完整退出编排（恢复+停代理+退出托盘）
 }
 
 type app struct {
@@ -233,6 +248,21 @@ func (a *app) rebuild() {
 		}
 		a.rebuild()
 	})
+
+	systray.AddSeparator()
+	if st.Update != nil && st.Update.URL != "" {
+		mUpd := systray.AddMenuItem("🆕 新版本 "+st.Update.Version+" 可用，点击下载…", "打开 GitHub Release 页面")
+		url := st.Update.URL
+		a.watch(ctx, mUpd, func() {
+			if a.act.OpenRelease != nil {
+				a.act.OpenRelease(url)
+			}
+		})
+	}
+	if st.Version != "" {
+		mVer := systray.AddMenuItem("版本 "+st.Version, "")
+		mVer.Disable()
+	}
 
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("退出（恢复环境变量并停止代理）", "")

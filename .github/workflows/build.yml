@@ -14,9 +14,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Resolve version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=dev-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+          fi
       - run: go vet ./...
       - run: go test ./...
-      - run: go build -trimpath -ldflags "-s -w" -o cops.exe .
+      - run: go build -trimpath -ldflags "-s -w -X cops/internal/cli.Version=$env:VERSION" -o cops.exe .
       - name: Package
         shell: pwsh
         run: Compress-Archive -Path cops.exe -DestinationPath cops-windows-x64.zip
@@ -32,12 +40,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Resolve version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=dev-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+          fi
       - run: go vet ./...
       - run: go test ./...
       - name: Build arm64 + amd64, merge universal
         run: |
-          CGO_ENABLED=1 GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o cops-arm64 .
-          CGO_ENABLED=1 GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o cops-amd64 .
+          CGO_ENABLED=1 GOARCH=arm64 go build -trimpath -ldflags "-s -w -X cops/internal/cli.Version=$VERSION" -o cops-arm64 .
+          CGO_ENABLED=1 GOARCH=amd64 go build -trimpath -ldflags "-s -w -X cops/internal/cli.Version=$VERSION" -o cops-amd64 .
           lipo -create -output cops cops-arm64 cops-amd64
           lipo cops -verify_arch arm64 x86_64
           chmod 755 cops
