@@ -133,6 +133,13 @@ var addCmd = &cobra.Command{
 		if t, _ := cmd.Flags().GetInt("timeout"); t > 0 {
 			p.TimeoutSec = t
 		}
+		if mp, _ := cmd.Flags().GetString("max-prompt-tokens"); strings.TrimSpace(mp) != "" {
+			n, err := config.ParseContextWindow(mp)
+			if err != nil {
+				return err
+			}
+			p.MaxPromptTokens = n
+		}
 		if err := p.Validate(); err != nil {
 			return err
 		}
@@ -222,15 +229,19 @@ var switchCmd = &cobra.Command{
 			}
 			defer resp.Body.Close()
 			var out struct {
-				OK    bool   `json:"ok"`
-				Error string `json:"error"`
-				Model string `json:"model"`
+				OK              bool   `json:"ok"`
+				Error           string `json:"error"`
+				Model           string `json:"model"`
+				MaxPromptTokens int    `json:"maxPromptTokens"`
 			}
 			_ = json.NewDecoder(resp.Body).Decode(&out)
 			if resp.StatusCode != http.StatusOK || !out.OK {
 				return fmt.Errorf("切换失败: %s", out.Error)
 			}
 			fmt.Printf("✅ 已切换到 %s（模型 %s）—— 即时生效，无需重启 Copilot CLI\n", name, out.Model)
+			if out.MaxPromptTokens > 0 {
+				fmt.Printf("   已刷新 %s=%d（仅新开的 Copilot 会话生效）\n", config.EnvMaxPromptTokens, out.MaxPromptTokens)
+			}
 			return nil
 		}
 
@@ -248,6 +259,9 @@ var switchCmd = &cobra.Command{
 		cfg.Active = name
 		if err := cfg.Save(); err != nil {
 			return err
+		}
+		if err := syncMaxPromptEnv(cfg); err != nil {
+			fmt.Printf("⚠ 刷新 %s 失败: %v\n", config.EnvMaxPromptTokens, err)
 		}
 		fmt.Printf("✅ 已切换到 %s（模型 %s）。\n   守护进程未运行：下次 cops serve 启动后生效。\n", name, p.Model)
 		return nil
@@ -336,6 +350,7 @@ func init() {
 	addCmd.Flags().Float64("price-in", 0, "每百万输入 token 单价")
 	addCmd.Flags().Float64("price-out", 0, "每百万输出 token 单价")
 	addCmd.Flags().String("context", "", "默认模型上下文窗口（如 128k、1.5m）")
+	addCmd.Flags().String("max-prompt-tokens", "", "COPILOT_PROVIDER_MAX_PROMPT_TOKENS 覆盖值（如 128k；留空按主对话目标上下文自动推导）")
 	addCmd.Flags().Int("timeout", 0, "上游超时秒数")
 	switchCmd.Flags().String("model", "", "同时更新该供应商的默认模型")
 	rootCmd.AddCommand(addCmd, listCmd, currentCmd, switchCmd, removeCmd, testCmd)

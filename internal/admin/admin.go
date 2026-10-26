@@ -94,17 +94,22 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfgPtr.Load()
 	p := cfg.ActiveProvider()
+	env := map[string]string{
+		"COPILOT_PROVIDER_TYPE":     "openai",
+		"COPILOT_PROVIDER_BASE_URL": cfg.PublicURL(),
+		"COPILOT_PROVIDER_API_KEY":  "<占位符，真实 Key 由 cops 注入>",
+		"COPILOT_MODEL":             cfg.VirtualModel,
+	}
 	resp := map[string]any{
 		"version":      Version,
 		"listen":       cfg.Listen,
 		"active":       cfg.Active,
 		"virtualModel": cfg.VirtualModel,
-		"copilotEnv": map[string]string{
-			"COPILOT_PROVIDER_TYPE":     "openai",
-			"COPILOT_PROVIDER_BASE_URL": cfg.PublicURL(),
-			"COPILOT_PROVIDER_API_KEY":  "<占位符，真实 Key 由 cops 注入>",
-			"COPILOT_MODEL":             cfg.VirtualModel,
-		},
+		"copilotEnv":   env,
+	}
+	if n := cfg.MaxPromptTokensForBYOK(); n > 0 {
+		resp["maxPromptTokens"] = n
+		env[config.EnvMaxPromptTokens] = strconv.Itoa(n)
 	}
 	if p != nil {
 		resp["activeProvider"] = map[string]any{
@@ -172,6 +177,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cfgPtr.Store(cfg)
+		s.SyncMaxPromptEnv()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "active": cfg.Active})
 	case http.MethodDelete:
 		name := r.URL.Query().Get("name")
@@ -193,6 +199,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cfgPtr.Store(cfg)
+		s.SyncMaxPromptEnv()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "active": cfg.Active})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -214,7 +221,20 @@ func (s *Server) Switch(name, model string) (*config.Provider, error) {
 		return nil, err
 	}
 	s.cfgPtr.Store(cfg)
+	s.SyncMaxPromptEnv()
 	return p, nil
+}
+
+// SyncMaxPromptEnv 已注入状态下刷新 COPILOT_PROVIDER_MAX_PROMPT_TOKENS
+// 为当前主对话目标推导值（配置写路径与守护进程启动时调用；仅对新开的 Copilot CLI 会话生效）。
+func (s *Server) SyncMaxPromptEnv() {
+	if !winenv.IsInjected(config.EnvBackupPath()) {
+		return
+	}
+	if err := winenv.SyncInjectedVar(config.EnvBackupPath(), config.EnvMaxPromptTokens,
+		s.cfgPtr.Load().MaxPromptTokensForBYOK()); err != nil {
+		log.Printf("刷新 %s 失败: %v", config.EnvMaxPromptTokens, err)
+	}
 }
 
 func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +256,8 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "active": p.Name, "model": p.Model})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "active": p.Name, "model": p.Model,
+		"maxPromptTokens": s.cfgPtr.Load().MaxPromptTokensForBYOK()})
 }
 
 // UseModel 设置默认虚拟模型（代理侧路由热切换，不动 COPILOT_MODEL 环境变量）。
@@ -251,6 +272,7 @@ func (s *Server) UseModel(name string) (string, error) {
 		return "", err
 	}
 	s.cfgPtr.Store(&newCfg)
+	s.SyncMaxPromptEnv()
 	return name, nil
 }
 
@@ -281,6 +303,7 @@ func (s *Server) handleRouting(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cfgPtr.Store(&newCfg)
+		s.SyncMaxPromptEnv()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "routing": newCfg.Routing})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)

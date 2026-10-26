@@ -129,6 +129,34 @@ func (c *Config) TargetMaxOutput(t RouteTarget) int {
 	return 0
 }
 
+// MainChatTarget 返回钉住名请求的主对话路由目标：
+// DefaultVirtual 表项 > 激活供应商默认模型（与 proxy /v1/models 钉住名标注一致）。
+func (c *Config) MainChatTarget() (RouteTarget, bool) {
+	if c.Routing.DefaultVirtual != "" {
+		if t, ok := c.Routing.VirtualModels[c.Routing.DefaultVirtual]; ok {
+			return t, true
+		}
+	}
+	if p := c.ActiveProvider(); p != nil {
+		return RouteTarget{Provider: p.Name, Model: p.Model}, true
+	}
+	return RouteTarget{}, false
+}
+
+// MaxPromptTokensForBYOK 返回应注入 EnvMaxPromptTokens 的值（0 = 不注入）：
+// 主对话目标供应商的 MaxPromptTokens 覆盖值优先，
+// 否则取主对话目标的生效上下文窗口（虚拟覆盖 > 真实模型 ModelContext）。
+func (c *Config) MaxPromptTokensForBYOK() int {
+	t, ok := c.MainChatTarget()
+	if !ok {
+		return 0
+	}
+	if p, _ := c.Find(t.Provider); p != nil && p.MaxPromptTokens > 0 {
+		return p.MaxPromptTokens
+	}
+	return c.TargetContext(t)
+}
+
 // validateTarget 校验单个路由目标。
 func (c *Config) validateTarget(where string, t RouteTarget) error {
 	if strings.TrimSpace(t.Provider) == "" {

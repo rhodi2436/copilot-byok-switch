@@ -331,6 +331,8 @@
       <label>模型性能参数（逐模型：上下文必填、最大输出可留空，均为数值 × 单位）</label>
       <div id="mcRows"></div>
       <button class="btn mini" type="button" onclick="ui.addMcRow()">＋ 添加模型参数</button>
+      <label>该供应商 PROMPT 上限覆盖（可选，数值 × 单位；留空 = 按主对话目标模型自动推导）</label>
+      <div id="mpG" class="ctxgrp"></div>
       <label>价格：每百万 tokens 输入 / 输出（可选，用于费用估算）</label>
       <div class="frow">
         <input id="fPriceIn" type="number" step="any" class="in" placeholder="输入单价">
@@ -362,10 +364,10 @@ const splitCtx = n => {
   if (n >= 1e3) return {num: +((n/1e3).toFixed(2)), unit: 1000};
   return {num: n, unit: 1};
 };
-const ctxInner = (cls, n, label = '上下文窗口') => {
+const ctxInner = (cls, n, label = '上下文窗口', ph = label === '上下文窗口' ? 128 : 8) => {
   const s = splitCtx(n || 0);
   const u = s ? s.unit : 1000;
-  return `<input type="number" min="0" step="any" class="in mono ${cls}-num" placeholder="如 ${label === '上下文窗口' ? 128 : 8}" title="${label}数值"${s ? ` value="${s.num}"` : ''}>` +
+  return `<input type="number" min="0" step="any" class="in mono ${cls}-num" placeholder="如 ${ph}" title="${label}数值"${s ? ` value="${s.num}"` : ''}>` +
     `<select class="in ${cls}-unit" title="单位：k = 千 tokens，m = 百万 tokens，tokens = 原始值">${CTX_UNITS.map(([v, l]) => `<option value="${v}"${u === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
 };
 const ctxGrp = (cls, n, label) => `<div class="ctxgrp">${ctxInner(cls, n, label)}</div>`;
@@ -487,11 +489,12 @@ const ui = {
         <span>钉住名 <b>${esc(s.virtualModel||'—')}</b></span>
         <span>默认虚拟模型 <b>${esc(dv||'未设置')}</b></span>
         <span>虚拟模型 <b class="num">${rtN}</b></span>
+        <span>PROMPT 上限 <b>${s.maxPromptTokens ? fmtCtxTokens(s.maxPromptTokens) : '<span class="warn">未设置</span>'}</b></span>
         <span>监听 <b class="num">${esc(s.listen)}</b></span>
         <span>环境注入 ${inj}</span><span>${auto}</span>
       </div>
       <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
-        ${code('COPILOT_PROVIDER_TYPE')}${code('COPILOT_PROVIDER_BASE_URL')}${code('COPILOT_MODEL')}
+        ${code('COPILOT_PROVIDER_TYPE')}${code('COPILOT_PROVIDER_BASE_URL')}${code('COPILOT_MODEL')}${s.maxPromptTokens ? code('COPILOT_PROVIDER_MAX_PROMPT_TOKENS') : ''}
       </div>
       <div class="hint" style="margin-top:8px">切换供应商/模型无需重启 Copilot CLI（base URL 不变，代理即时路由）。注入/恢复只影响新开终端。</div>`;
     $$('#ovStatus .cp').forEach(c => c.addEventListener('click', () => {
@@ -611,12 +614,13 @@ const ui = {
       el.className = 'pcard' + (p.name === this.active ? ' on' : '');
       const dctx = p.modelContext && p.modelContext[p.model] ? ' · 上下文 '+fmtCtxTokens(p.modelContext[p.model]) : '';
       const dmo = p.modelMaxOutput && p.modelMaxOutput[p.model] ? ' · 最大输出 '+fmtCtxTokens(p.modelMaxOutput[p.model]) : '';
+      const dmp = p.maxPromptTokens ? ' · PROMPT≤ '+fmtCtxTokens(p.maxPromptTokens) : '';
       el.innerHTML = `
         ${p.name === this.active ? '<span class="badge">⯑ 使用中</span>' : ''}
         <div class="name">${esc(p.name)}</div>
         <div class="meta">
           ${esc(p.baseUrl)}<br>
-          模型 <b>${esc(p.model||'—')}</b>${dctx}${dmo} · Key ${esc(p.apiKey||'无')}<br>
+          模型 <b>${esc(p.model||'—')}</b>${dctx}${dmo}${dmp} · Key ${esc(p.apiKey||'无')}<br>
           清单 ${(p.models||[]).length} 个${(p.models||[]).length?': '+esc(p.models.join(', ')):''}
         </div>
         <div class="acts">
@@ -648,6 +652,7 @@ const ui = {
     const moMap = p && p.modelMaxOutput || {};
     for (const m of Object.keys(moMap)) if (!mcMap.has(m)) mcMap.set(m, 0);
     for (const [m, v] of mcMap) this.addMcRow(m, v, moMap[m] || 0);
+    $('#mpG').innerHTML = ctxInner('mp', p && p.maxPromptTokens || 0, 'PROMPT 上限覆盖', 128);
     const price = p && p.prices && p.prices[p.model];
     $('#fPriceIn').value = price ? price.inputPerMillionTokens : '';
     $('#fPriceOut').value = price ? price.outputPerMillionTokens : '';
@@ -677,6 +682,7 @@ const ui = {
         on: r.querySelector('.mc-mo-num').value.trim(),
         ou: r.querySelector('.mc-mo-unit').value,
       })),
+      mp: ctxGrpVal($('#mpG')),
       pin: $('#fPriceIn').value, pout: $('#fPriceOut').value,
     };
   },
@@ -741,6 +747,8 @@ const ui = {
       if (Object.keys(mc).length) p.modelContext = mc;
       if (Object.keys(mo).length) p.modelMaxOutput = mo;
     }
+    if (!isFinite(d.mp)) { $('#dlgErr').textContent = 'PROMPT 上限覆盖需为正数或留空'; return; }
+    if (d.mp > 0) p.maxPromptTokens = d.mp;
     const pin = parseFloat(d.pin), pout = parseFloat(d.pout);
     if (p.model && (pin > 0 || pout > 0)) {
       p.prices = {[p.model]: {inputPerMillionTokens: pin||0, outputPerMillionTokens: pout||0, currency:'CNY'}};

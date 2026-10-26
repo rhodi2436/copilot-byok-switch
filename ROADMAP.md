@@ -9,7 +9,8 @@
 > **v0.3.x 裸 cops 直启**（无参数 `cops` / 双击 `cops.exe` = `cops tray`：守护进程 + 托盘 + 启动即注入，已运行守护进程时自动附着；`cops --console` 保留控制台；所有子命令行为不变；双击/独占控制台启动时自我重启为无控制台分离进程，原进程立即退出，控制台窗口干净关闭——规避 Windows Terminal 下 `FreeConsole` 残留 `[process exited]` 黑窗的问题）；
 > **v0.4 macOS 支持**（`winenv_darwin.go`：环境变量经 `~/.zshrc` 标记块注入/恢复，LaunchAgent 登录自启，原生 systray；Finder 可双击 `Cops.app` 启动菜单栏常驻；GitHub Actions 构建 arm64 + amd64 universal binary 与 `.app` 并发布）；
 > **v0.3.x WebUI 修补与模型最大输出**（标签切换即时渲染 providers/routing；上下文输入统一「数值 × 单位」；新增 `providers[].modelMaxOutput` 真实模型级最大输出 token：请求中 `max_tokens`/`max_completion_tokens` 超限即被钳制（Copilot CLI 每请求固定发送 `max_tokens`，超出上游上限时部分供应商直接 400）、`/v1/models` 条目输出 `max_output_tokens`、Web 弹窗逐模型「上下文 / 最大输出」两组输入与卡片展示）；
-> **v0.3.x 版本注入与更新提示**（CI 构建以 `-ldflags -X` 注入版本号：tag 构建注入 tag 名、master 注入 `dev-<sha7>`，发布产物 `cops --version` 与 tag 一致；托盘菜单尾部显示版本项、检测到新版本出现「🆕 点击下载」项直达 GitHub Release 页；`internal/update` 包：匿名查询 GitHub latest release（启动后 10s 首查、每 24h 复查、失败静默），自研 semver 数字段比较（非 semver 版本按 0.0.0 处理，dev 构建总能收到正式版提示）；管理页顶部霓虹横幅提示新版本）。
+> **v0.3.x 版本注入与更新提示**（CI 构建以 `-ldflags -X` 注入版本号：tag 构建注入 tag 名、master 注入 `dev-<sha7>`，发布产物 `cops --version` 与 tag 一致；托盘菜单尾部显示版本项、检测到新版本出现「🆕 点击下载」项直达 GitHub Release 页；`internal/update` 包：匿名查询 GitHub latest release（启动后 10s 首查、每 24h 复查、失败静默），自研 semver 数字段比较（非 semver 版本按 0.0.0 处理，dev 构建总能收到正式版提示）；管理页顶部霓虹横幅提示新版本）；
+> **v1.0.1 MAX_PROMPT_TOKENS 自动注入**（`COPILOT_PROVIDER_MAX_PROMPT_TOKENS` 随注入块自动写入并全程同步：取值 = 主对话路由目标（DefaultVirtual 表项 > 激活供应商默认模型）的 `maxPromptTokens` 覆盖 > 虚拟 `contextWindow` > 真实模型 `modelContext`，全未知则 0=不注入（沿用用户手动值）。经用户批准偏离原「纯手动字段」方案，采用**自动推导 + 手动覆盖**；同步点覆盖 switch / model use / 路由与供应商编辑 / 守护进程启动，`winenv.SyncInjectedVar` 保证 >0 注入补备份、≤0 仅在 cops 注入过时恢复原值/删除；doctor 校验注入值一致性；`cops add --max-prompt-tokens`、Web 弹窗覆盖字段、总览 statline 与供应商卡片展示。CLI 在进程启动时凝固能力值，切换上下文差异大的供应商后建议新开 CLI 会话）。
 
 ## macOS 实机验收
 
@@ -22,7 +23,7 @@
 
 ## 迭代 v0.3.x —— 待办小项
 
-### provider 级 `COPILOT_PROVIDER_MAX_PROMPT_TOKENS` 自动注入
+### provider 级 `COPILOT_PROVIDER_MAX_PROMPT_TOKENS` 自动注入 ✅ 已完成（v1.0.1）
 
 背景调研结论（2026-10，证据：github/copilot-cli#4638、#1761、#4358、#4218 与官方 BYOK 文档）：
 
@@ -32,12 +33,13 @@
 - 官方托管模式无此矛盾：能力按模型查服务端同步的目录，auto 模式每请求从池中选模型、压缩阈值按被选模型计算（#4218）；
 - `MAX_OUTPUT_TOKENS` 已由代理侧 `modelMaxOutput` 钳制动态度量；`MAX_PROMPT_TOKENS` 是请求发出前的客户端决策，**代理无解**，只能保证"新会话拿到正确值"。
 
-待办：
+实施结果（与原待办的差异经用户批准：**自动推导 + 手动覆盖**，替代纯手动字段）：
 
-- `providers[].maxPromptTokens` 配置字段（0 = 不注入该变量，沿用用户手动值）
-- switch / 激活 / tray 启动时随环境变量块一并注入与恢复
-- doctor 校验：注入值 vs 主对话路由目标（DefaultVirtual → 真实模型）的 `modelContext` 一致性，偏小提示过度压缩、偏大提示 400 风险
-- Web 弹窗与 `cops add` 表单补充该字段；README 说明"切换到上下文差异大的供应商后建议重启 CLI 会话"
+- `providers[].maxPromptTokens` 供应商级覆盖值（0 = 自动推导）；
+- 推导链：主对话目标（DefaultVirtual 表项 > 激活供应商默认模型）的覆盖值 > 虚拟 `contextWindow` > 真实模型 `modelContext`，全未知则不注入该变量；
+- 注入/恢复随现有环境变量块一并处理；switch / model use / 路由与供应商编辑 / 守护进程启动全路径经 `winenv.SyncInjectedVar` 同步（>0 注入并补备份保留最早原值；≤0 仅在备份含该变量时恢复/删除，用户手动值不受影响）；
+- doctor 校验注入值与推导值一致性；`cops add --max-prompt-tokens`；Web 弹窗覆盖字段、总览 statline 与供应商卡片展示；
+- README 已说明"切换到上下文差异大的供应商后建议新开 CLI 会话"。
 
 
 ---
