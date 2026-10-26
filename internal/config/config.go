@@ -39,6 +39,10 @@ type Provider struct {
 	// 发送 max_tokens，超过真实模型输出上限时部分上游直接返回 400。
 	// 0/未配置 = 不限制。
 	ModelMaxOutput map[string]int `json:"modelMaxOutput,omitempty"`
+	// MaxPromptTokens 注入 COPILOT_PROVIDER_MAX_PROMPT_TOKENS 的供应商级覆盖值
+	// （Copilot CLI 启动时读取一次，驱动自动压缩阈值 ≈ 95%）。
+	// 0 = 按主对话路由目标的上下文窗口自动推导（见 MaxPromptTokensForBYOK）。
+	MaxPromptTokens int               `json:"maxPromptTokens,omitempty"`
 	Prices   map[string]ModelPrice `json:"prices,omitempty"`
 	ExtraHeaders map[string]string `json:"extraHeaders,omitempty"`
 	TimeoutSec   int    `json:"timeoutSec,omitempty"`    // 上游请求超时（秒），默认 600
@@ -75,6 +79,10 @@ type Config struct {
 const (
 	DefaultListen       = "127.0.0.1:8317"
 	DefaultVirtualModel = "cops-active"
+
+	// EnvMaxPromptTokens 注入 Copilot CLI 的 BYOK 上下文上限变量名。
+	// CLI 进程启动时读取一次（运行中会话不热更），驱动其自动压缩阈值（≈95%）。
+	EnvMaxPromptTokens = "COPILOT_PROVIDER_MAX_PROMPT_TOKENS"
 )
 
 // Dir 配置目录（%USERPROFILE%\.cops）。
@@ -254,6 +262,9 @@ func (p *Provider) Validate() error {
 		if n <= 0 {
 			return fmt.Errorf("模型 %q 的最大输出必须为正整数: %d", m, n)
 		}
+	}
+	if p.MaxPromptTokens < 0 {
+		return fmt.Errorf("maxPromptTokens 不能为负数: %d", p.MaxPromptTokens)
 	}
 	return nil
 }

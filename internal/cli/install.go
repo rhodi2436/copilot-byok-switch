@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,11 @@ func copilotEnvVars(cfg *config.Config) map[string]string {
 		envProviderBaseURL: cfg.PublicURL(),
 		envProviderAPIKey:  dummyAPIKey,
 		envModel:           cfg.VirtualModel,
+	}
+	// 上下文上限（Copilot CLI 启动时凝固，驱动压缩阈值 ≈95%）：
+	// 主对话目标覆盖值/上下文已知时注入；未知则不写，沿用用户手动值。
+	if n := cfg.MaxPromptTokensForBYOK(); n > 0 {
+		vars[config.EnvMaxPromptTokens] = strconv.Itoa(n)
 	}
 	for name, value := range localProxyEnvVars() {
 		vars[name] = value
@@ -82,6 +88,15 @@ func hasLoopbackNoProxy(value string) bool {
 		found[strings.ToLower(strings.TrimSpace(entry))] = true
 	}
 	return found["localhost"] && found["127.0.0.1"] && found["::1"]
+}
+
+// syncMaxPromptEnv 已注入状态下把 COPILOT_PROVIDER_MAX_PROMPT_TOKENS 刷新为当前
+// 推导值（切换供应商/模型、编辑供应商或路由后调用；仅对新开的 Copilot CLI 会话生效）。
+func syncMaxPromptEnv(cfg *config.Config) error {
+	if !winenv.IsInjected(config.EnvBackupPath()) {
+		return nil
+	}
+	return winenv.SyncInjectedVar(config.EnvBackupPath(), config.EnvMaxPromptTokens, cfg.MaxPromptTokensForBYOK())
 }
 
 // copilotEnvNames COPILOT_* 变量名列表。
@@ -135,6 +150,9 @@ var installCmd = &cobra.Command{
 		fmt.Println("已注入用户环境变量（原值已备份，可随时恢复）：")
 		for _, name := range copilotEnvNames() {
 			fmt.Printf("  %s=%s\n", name, vars[name])
+		}
+		if n := cfg.MaxPromptTokensForBYOK(); n > 0 {
+			fmt.Printf("  %s=%d（新开的 Copilot 会话生效）\n", config.EnvMaxPromptTokens, n)
 		}
 		fmt.Println("  NO_PROXY/no_proxy 已包含 localhost、127.0.0.1、::1，并保留原有绕过规则")
 		fmt.Println()
@@ -195,7 +213,15 @@ var injectCmd = &cobra.Command{
 			if err := winenv.InjectEnv(config.EnvBackupPath(), localProxyEnvVars()); err != nil {
 				return fmt.Errorf("更新本机代理绕过规则失败: %w", err)
 			}
-			fmt.Println("已处于注入状态；已确保 NO_PROXY/no_proxy 绕过本机代理。新开终端后生效。")
+			if err := syncMaxPromptEnv(cfg); err != nil {
+				return fmt.Errorf("刷新 %s 失败: %w", config.EnvMaxPromptTokens, err)
+			}
+			if n := cfg.MaxPromptTokensForBYOK(); n > 0 {
+				fmt.Printf("已处于注入状态；已确保 NO_PROXY/no_proxy 绕过本机代理，并刷新 %s=%d。新开终端后生效。\n",
+					config.EnvMaxPromptTokens, n)
+			} else {
+				fmt.Println("已处于注入状态；已确保 NO_PROXY/no_proxy 绕过本机代理。新开终端后生效。")
+			}
 			return nil
 		}
 		if err := winenv.InjectEnv(config.EnvBackupPath(), copilotEnvVars(cfg)); err != nil {
@@ -326,6 +352,19 @@ var doctorCmd = &cobra.Command{
 			check(pass,
 				fmt.Sprintf("环境变量 %s=%s", name, v),
 				"运行 cops inject 或 cops tray 注入；新开终端后生效")
+		}
+
+		// 上下文注入一致性：期望值 = 主对话目标推导值（覆盖 > 目标上下文）。
+		if err == nil {
+			if n := cfg.MaxPromptTokensForBYOK(); n > 0 {
+				want := strconv.Itoa(n)
+				v, exists := winenv.GetUserEnv(config.EnvMaxPromptTokens)
+				// 已注入时必须等于期望；未注入时用户手动值与 cops 无关，不做判断。
+				pass := !injected || (exists && v == want)
+				check(pass,
+					fmt.Sprintf("%s=%s（主对话目标上下文，CLI 压缩阈值 ≈%d）", config.EnvMaxPromptTokens, want, n*95/100),
+					"运行 cops inject 刷新注入；新开终端后重试 Copilot")
+			}
 		}
 
 		if winenv.TraySupported() {

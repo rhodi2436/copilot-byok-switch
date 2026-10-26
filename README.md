@@ -114,7 +114,7 @@ mv cops "$HOME/.local/bin/cops"
 | `cops install [--model X]` | 注入 4 个 `COPILOT_*`（带备份）+ 设置平台用户级自启（cops tray） |
 | `cops uninstall` | 恢复环境变量 + 清理自启（保留 `~/.cops/` 数据） |
 | `cops inject` / `cops restore` | 手动注入 / 恢复环境变量（托盘崩溃后兜底） |
-| `cops add [名称] --url --key --model [--models] [--price-in --price-out] [--context 128k]` | 添加供应商（--context 为默认模型上下文） |
+| `cops add [名称] --url --key --model [--models] [--price-in --price-out] [--context 128k] [--max-prompt-tokens 128k]` | 添加供应商（--context 为默认模型上下文；--max-prompt-tokens 覆盖注入值，留空自动推导） |
 | `cops list` / `cops current` | 列出供应商 / 查看当前激活 |
 | `cops switch <名称> [--model X]` | 一键切换（守护进程运行中时即时生效） |
 | `cops model list` | 列出虚拟模型路由与 utility 配置 |
@@ -135,6 +135,7 @@ mv cops "$HOME/.local/bin/cops"
    - `COPILOT_PROVIDER_BASE_URL=http://127.0.0.1:8317/v1`（固定指向本地代理）
    - `COPILOT_PROVIDER_API_KEY=cops-local`（占位符，真实 Key 由代理注入）
    - `COPILOT_MODEL=cops-active`（虚拟模型名，由代理改写为真实模型）
+   - `COPILOT_PROVIDER_MAX_PROMPT_TOKENS=128000`（条件注入：按主对话目标自动推导，全未知则不写）
 2. Copilot CLI（BYOK 模式，OpenAI wire）将请求发往 `/v1/chat/completions` 等端点；
 3. 代理按路由目标转发：
    - 剥离路径 `/v1` 前缀后拼接到**目标供应商** BaseURL（OpenAI SDK 约定）；
@@ -159,6 +160,7 @@ cops 因此在代理侧做**确定性多模型路由**，按请求体 `model` �
 - 未知 model id 一律走兜底，**永不向上游 404**（规避 CLI 内部 id 直发上游的问题）；
 - 命中 1-3 时，转发参数（BaseURL/Key/超时/自定义头/`stripSampling`）取**目标供应商**；
 - 切默认模型三入口等价：`cops model use`、托盘「模型」菜单、Web 管理页 —— 都只改代理侧映射，环境变量不动，即时生效；
+- `COPILOT_PROVIDER_MAX_PROMPT_TOKENS`（上下文上限，驱动 Copilot CLI 自动压缩阈值 ≈95%）由 cops 自动维护：取主对话目标（默认虚拟模型 > 激活供应商默认模型）的供应商级 `maxPromptTokens` 覆盖 > 虚拟 `contextWindow` > 真实模型 `modelContext`，全未知则不注入（沿用你手动设置的值）。切换供应商/模型/路由后 cops 即刻刷新该变量；但 Copilot CLI **在进程启动时读取一次**，上下文差异大的切换后建议新开 CLI 会话；
 - 请求日志记录 `virtualModel`（原始名）与 `routeRule`（命中的规则），用量统计仍按真实模型聚合。
 
 ### 配置文件 `~/.cops/config.json`
@@ -175,6 +177,7 @@ cops 因此在代理侧做**确定性多模型路由**，按请求体 `model` �
     "model": "glm-4.7",
     "models": ["glm-4.7", "glm-4-flash"],
     "modelContext": { "glm-4.7": 128000, "glm-4-flash": 8000 },  // 真实模型上下文（token），/v1/models 的 context_length 来源
+    "maxPromptTokens": 200000,  // 可选：覆盖注入的 COPILOT_PROVIDER_MAX_PROMPT_TOKENS；0/缺省 = 按 主对话目标自动推导
     "prices": { "glm-4.7": { "inputPerMillionTokens": 0.5, "outputPerMillionTokens": 2 } },
     "timeoutSec": 600,
     "passthroughModel": false,   // true=不改写 model

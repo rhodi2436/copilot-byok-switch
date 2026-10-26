@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -169,6 +170,36 @@ func RestoreEnv(backupPath string) (bool, error) {
 	}
 	BroadcastSettingChange()
 	return true, nil
+}
+
+// SyncInjectedVar 同步单个条件注入变量（如 COPILOT_PROVIDER_MAX_PROMPT_TOKENS）：
+// value > 0 时经 InjectEnv 写入（首次写入前把原值补进备份，重写不破坏最早备份）；
+// value <= 0 时若该变量在备份中（cops 注入过）则恢复原值/删除，否则不动
+// （无备份 = 未注入状态，或变量是用户手动设置的，均与 cops 无关）。
+func SyncInjectedVar(backupPath, name string, value int) error {
+	if value > 0 {
+		return InjectEnv(backupPath, map[string]string{name: strconv.Itoa(value)})
+	}
+	b, err := ReadBackup(backupPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	e, ok := b.Vars[name]
+	if !ok {
+		return nil
+	}
+	if e.Exists {
+		if err := SetUserEnv(name, e.Value); err != nil {
+			return err
+		}
+	} else if err := DeleteUserEnv(name); err != nil {
+		return err
+	}
+	BroadcastSettingChange()
+	return nil
 }
 
 // ReadBackup 读取备份内容（doctor / 状态展示用）。

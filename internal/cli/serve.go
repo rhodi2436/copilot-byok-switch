@@ -72,6 +72,9 @@ func newDaemon(cfg *config.Config, logToFile bool) (*daemon, error) {
 	d.cancel = updCancel
 	adminSrv.StartUpdateCheck(updCtx)
 
+	// 已注入状态下校准上下文上限变量（守护进程停机期间配置可能已变更）。
+	adminSrv.SyncMaxPromptEnv()
+
 	if logToFile {
 		f, err := os.OpenFile(filepath.Join(config.LogsDir(), "daemon.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err == nil {
