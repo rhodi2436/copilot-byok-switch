@@ -67,10 +67,11 @@ func newDaemon(cfg *config.Config, logToFile bool) (*daemon, error) {
 		_ = srv.Close()
 	}
 
-	// 后台更新检查（延迟首查，失败静默）。
+	// 后台更新检查（延迟首查，失败静默）+ 限额自动切换引擎。
 	updCtx, updCancel := context.WithCancel(context.Background())
 	d.cancel = updCancel
 	adminSrv.StartUpdateCheck(updCtx)
+	adminSrv.StartAutoSwitch(updCtx)
 
 	// 已注入状态下校准上下文上限变量（守护进程停机期间配置可能已变更）。
 	adminSrv.SyncMaxPromptEnv()

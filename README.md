@@ -21,8 +21,10 @@ Copilot CLI ──固定指向──▶ cops 代理(127.0.0.1:8317/v1) ──路
 | 🧭 多模型路由 | 虚拟模型表 + utility 识别：重活走 pro、辅助调用走 flash；`cops model use` / 托盘 / Web 管理页一键切默认，无需重启会话 |
 | 📏 上下文窗口 | 真实模型级/虚拟模型级两级配置（`128k` 简写），`/v1/models` 输出 `context_length` 供其他 OpenAI 客户端读取 |
 | 📊 用量统计 | 按供应商/模型/日聚合 token 与估算费用（含 SSE 流式 usage 捕获） |
+| 🚦 限额用量 | 订阅套餐（GLM Coding Plan 优先）多窗口用量查询：5小时/周/月各自占比与重置时间，`cops quota` 一览 |
+| 🔄 限额自动切换 | 任一窗口用量达到阈值（默认 95%）自动切到候选顺序中首个未超阈值的供应商，事件留痕 |
 | 📝 请求日志 | JSONL 明细 + 大小轮转 + 保留天数，`cops logs` / Web 页可查 |
-| 🖥️ Web 管理页 | 内置于代理（`/_cops/`）：一键切换供应商/模型、路由可视化编辑（即时保存）、用量图表、请求日志 |
+| 🖥️ Web 管理页 | 内置于代理（`/_cops/`）：一键切换供应商/模型、路由可视化编辑（即时保存）、用量图表、限额用量条与自动切换设置、请求日志 |
 
 ## 安装
 
@@ -64,9 +66,62 @@ cops model use cops-pro      # 切默认虚拟模型，即时生效（环境变�
 cops doctor        # 体检：配置、守护进程、注入状态、自启、上游连通
 cops open          # 浏览器打开 Web 管理页
 cops stats         # 用量与费用
+cops quota         # 限额用量（GLM Coding Plan 等订阅套餐：5小时/周/月窗口占比）
+cops autoswitch    # 查看限额自动切换配置与最近事件
 cops logs -f       # 跟随请求日志
 cops uninstall     # 恢复环境变量 + 清理自启（配置保留）
 ```
+
+### 限额用量与自动切换（v1.2）
+
+订阅制套餐（如 GLM Coding Pro/Max）通常有**多重限额窗口**（5 小时 + 周/月），
+额度耗尽前主动切换供应商比被动等 429 体验好得多。cops 内置用量查询与阈值自动切换：
+
+```powershell
+# 1. 添加 GLM Coding Plan 供应商（BaseURL 域名命中 bigmodel.cn / z.ai 即自动启用用量查询）
+cops add glm --url https://open.bigmodel.cn/api/coding/paas/v4 --key <套餐Key> --model glm-4.7
+cops add glm2 --url https://open.bigmodel.cn/api/coding/paas/v4 --key <另一个套餐Key> --model glm-4.7
+cops add deepseek --url https://api.deepseek.com/v1 --key <Key> --model deepseek-chat   # 按量付费，无限额窗口
+
+# 2. 查看各窗口用量（5小时 / 周 / 月占比 + 重置时间）
+cops quota
+
+# 3. 启用自动切换：任一窗口占比 ≥ 阈值时，按候选顺序切到第一个未超阈值的供应商
+cops autoswitch on
+cops autoswitch set --threshold 95 --interval 300          # 达 95% 切换，每 5 分钟轮询
+cops autoswitch set --order glm2,deepseek                  # 候选优先顺序（缺省按配置顺序）
+cops autoswitch                                          # 查看配置与最近切换事件
+```
+
+- **判定口径**：每个供应商可能有多个限额窗口，取**占比最高的窗口**（约束最紧的一个）与阈值比较；
+  未配置用量查询的供应商视为"用量未知"，可作为切换目标（如按量付费 DeepSeek）。
+- **查询端点**：GLM 使用智谱控制台内部接口 `GET /api/monitor/usage/quota/limit`
+  （官方 Claude Code 插件同款；国内 `open.bigmodel.cn`、国际 `api.z.ai` 自动适配；
+  团队版在 `quota.organizationId` / `quota.projectId` 补齐标识）。
+- 自动切换引擎随守护进程（`cops serve` / `cops tray`）运行，切换走既有热切换通道，**无需重启 Copilot CLI**；
+  全部候选超阈值时保持不变并记录事件（不刷屏去重）；Web 管理页总览有用量条与可视化配置。
+
+#### 团队版（组织/项目）查询范围
+
+智谱的用量端点**默认始终查询个人范围**，不理会 API Key 所属的项目——同一个账号下
+"团队套餐 + 个人套餐"两个供应商若都不绑定团队标识，会查出**完全相同的个人用量**
+（cops 会明确警告"与 xx 查到完全相同的用量"，自动切换也会跳过这类同套餐候选）。
+团队供应商需绑定查询范围：
+
+```powershell
+cops quota team glm-work --org <组织ID> --project <项目ID>
+cops quota unbind glm-work        # 解除，回到个人范围
+```
+
+ID 获取方式（智谱未提供公开查询 API，需从控制台取一次）：
+
+1. 浏览器登录 bigmodel.cn，打开团队用量页 `bigmodel.cn/coding-plan/team/usage-stats`；
+2. F12 → Network，刷新页面，找 `api/monitor/usage/quota/limit` 请求；
+3. 复制请求头 `Bigmodel-Organization`（组织 ID）与 `Bigmodel-Project`（项目 ID）的值
+   （也可在页面 localStorage 中找这两个字段；两个 ID 必须成对，缺一个查询会落回个人范围）。
+
+也可在 Web 管理页供应商弹窗「团队查询范围」填写；`cops quota` 表格的"范围"列显示
+个人/团队，绑定后用量应与个人套餐不同。
 
 ## 托盘模式（推荐常驻方式）
 
@@ -124,6 +179,12 @@ mv cops "$HOME/.local/bin/cops"
 | `cops remove <名称>` | 删除供应商 |
 | `cops test [名称]` | 上游连通性测试 |
 | `cops stats [--days N]` | 用量费用统计 |
+| `cops quota [名称]` | 限额用量查询（多窗口占比、重置时间与查询范围；相同用量自动告警） |
+| `cops quota team <名称> --org <ID> --project <ID>` | 绑定团队（组织/项目）查询范围（GLM 团队版必需） |
+| `cops quota unbind <名称>` | 解除团队范围，回到个人范围查询 |
+| `cops autoswitch` | 查看限额自动切换配置、最近检查与切换事件 |
+| `cops autoswitch on/off` | 启用 / 停用限额自动切换 |
+| `cops autoswitch set --threshold 95 --interval 300 --order a,b` | 修改阈值（百分比）/ 轮询间隔（秒）/ 候选顺序 |
 | `cops logs [-f] [--limit N]` | 请求日志 |
 | `cops open` | 打开 Web 管理页 |
 | `cops doctor` | 全面体检（含注入状态） |
@@ -182,8 +243,21 @@ cops 因此在代理侧做**确定性多模型路由**，按请求体 `model` �
     "timeoutSec": 600,
     "passthroughModel": false,   // true=不改写 model
     "noUsageInjection": false,   // true=不注入 include_usage（上游不兼容时用）
-    "stripSampling": false       // true=剥离 temperature/top_p 等采样参数（CLI 会强制发 temperature:0，思考模型上游建议开启）
+    "stripSampling": false,      // true=剥离 temperature/top_p 等采样参数（CLI 会强制发 temperature:0，思考模型上游建议开启）
+    "quota": {                   // 限额用量查询（v1.2；域名命中 bigmodel.cn/z.ai 可省略整段）
+      "kind": "glm",             // ""=按 BaseURL 自动探测 / "glm" / "none"=关闭
+      "apiKey": "",              // 查询密钥覆盖；空=复用供应商 apiKey
+      "baseUrl": "",             // 查询根地址覆盖；空=取 BaseURL 的 scheme://host
+      "organizationId": "",      // 团队版标识（个人版留空）
+      "projectId": ""
+    }
   }],
+  "autoSwitch": {                // 限额自动切换（v1.2）
+    "enabled": true,
+    "thresholdPct": 95,          // 任一窗口占比达到即切换（缺省 95）
+    "intervalSec": 300,          // 轮询间隔（缺省 300，最小 30）
+    "order": ["glm2", "deepseek"] // 候选优先顺序；缺省=providers 顺序
+  },
   "routing": {                                // v0.2 模型路由（可选；缺省时全部走激活供应商默认模型，等价 v0.1）
     "virtualModels": {
       "cops-pro":   { "provider": "glm", "model": "glm-4.7" },
@@ -226,6 +300,12 @@ cops 因此在代理侧做**确定性多模型路由**，按请求体 `model` �
 **Q: 想让重活走 pro、辅助小任务走 flash 怎么配？**
 `cops model add cops-pro --provider glm --model glm-4.7`、`cops model add cops-flash --provider glm --model glm-4-flash` 后 `cops model use cops-pro`。CLI 内部辅助调用（摘要/标题等）可在 Web 管理页或配置里加 utility 路由到 flash。托盘「模型」菜单随时一键切换。
 
+**Q: 限额用量查询报错 / 没有数据？**
+用量查询使用套餐侧端点，需满足：① 该供应商是订阅套餐（GLM 需为 Coding Plan 套餐 key，按量付费 key 会报"不存在 coding plan"）；② `quota.kind` 已启用（bigmodel.cn / z.ai 域名自动启用，其他域名需 `cops add --quota glm` 或 Web 弹窗选择）；③ 团队版需补齐 `quota.organizationId` / `quota.projectId`（`cops quota team` 绑定，见上节）。自动切换不依赖用量查询的供应商仍可作为候选（视为用量未知）。
+
+**Q: 两个供应商查出的用量完全一样？**
+智谱用量端点默认查询**个人范围**、不理会 Key 的项目归属。团队套餐供应商必须绑定团队查询范围（`cops quota team <名称> --org --project`），否则查到的是个人套餐的用量。cops 检测到完全相同的用量会在 `cops quota` 与 Web 管理页给出警告，自动切换也会跳过这类"同套餐"候选。
+
 **Q: 安全性？**
 代理仅监听 `127.0.0.1`，管理页无鉴权（本机场景）。API Key 明文存于 `~/.cops/config.json`，请勿把该目录加入同步/备份到不受信位置。若改 `listen` 为 `0.0.0.0` 需自行承担风险。
 
@@ -247,7 +327,8 @@ go run . serve      # 源码直接运行
 - `devtools/icongen`：重新生成托盘图标（`go run ./devtools/icongen` → `internal/tray/icon.ico`）
 - 目录结构：`internal/proxy`（核心反代）、`internal/tray`（托盘 UI）、`internal/admin`（管理 API+Web）、
   `internal/config`（配置）、`internal/stats`（用量）、`internal/reqlog`（日志）、
-  `internal/cli`（命令）、`internal/winenv`（Windows 集成：环境变量注入/恢复、注册表）
+  `internal/quota`（限额用量查询 + 自动切换决策）、`internal/cli`（命令）、
+  `internal/winenv`（Windows 集成：环境变量注入/恢复、注册表）
 
 ## 许可
 

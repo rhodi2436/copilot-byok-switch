@@ -8,7 +8,8 @@ import (
 
 func TestSaveLoadRoundtrip(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("USERPROFILE", dir); t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("HOME", dir)
 	if got := Path(); !strings.HasSuffix(got, filepath.Join(".cops", "config.json")) {
 		t.Fatalf("Path() = %s, want under %s", got, filepath.Join(dir, ".cops"))
 	}
@@ -37,7 +38,8 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 }
 
 func TestSaveCreatesBackup(t *testing.T) {
-	t.Setenv("USERPROFILE", t.TempDir()); t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	c := Default()
 	c.Providers = []Provider{{Name: "a", BaseURL: "https://a.example.com"}}
 	if err := c.Save(); err != nil {
@@ -77,6 +79,36 @@ func TestValidate(t *testing.T) {
 		if (err == nil) != tc.want {
 			t.Errorf("Validate(%+v) = %v, want ok=%v", tc.p, err, tc.want)
 		}
+	}
+}
+
+func TestQuotaConfigValidate(t *testing.T) {
+	cases := []struct {
+		q       QuotaConfig
+		wantErr bool
+	}{
+		{QuotaConfig{}, false},
+		{QuotaConfig{Kind: "glm"}, false},
+		{QuotaConfig{Kind: "none"}, false},
+		{QuotaConfig{Kind: "unknown"}, true},
+		// 团队标识必须成对：只配其一查询会落回个人范围，必须报错。
+		{QuotaConfig{Kind: "glm", OrganizationID: "org1"}, true},
+		{QuotaConfig{Kind: "glm", ProjectID: "proj1"}, true},
+		{QuotaConfig{Kind: "glm", OrganizationID: "org1", ProjectID: "proj1"}, false},
+		{QuotaConfig{BaseURL: "bad://url"}, true},
+	}
+	for _, tc := range cases {
+		err := tc.q.Validate()
+		if (err != nil) != tc.wantErr {
+			t.Errorf("QuotaConfig(%+v).Validate() = %v, wantErr=%v", tc.q, err, tc.wantErr)
+		}
+	}
+	// Scope 判定
+	if (&QuotaConfig{}).IsTeamScope() {
+		t.Error("空配置不应为团队范围")
+	}
+	if !(&QuotaConfig{OrganizationID: "o", ProjectID: "p"}).IsTeamScope() {
+		t.Error("org+project 应为团队范围")
 	}
 }
 
@@ -163,11 +195,12 @@ func TestModelContextValidateAndNormalize(t *testing.T) {
 }
 
 func TestModelContextRoundtrip(t *testing.T) {
-	t.Setenv("USERPROFILE", t.TempDir()); t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	c := Default()
 	c.Providers = []Provider{{
 		Name: "glm", BaseURL: "https://open.bigmodel.cn/api/paas/v4",
-		ModelContext:  map[string]int{"glm-4.7": 128000, "glm-4-flash": 8000},
+		ModelContext:   map[string]int{"glm-4.7": 128000, "glm-4-flash": 8000},
 		ModelMaxOutput: map[string]int{"glm-4.7": 8192, "glm-4-flash": 4096, "stale": 0},
 	}}
 	c.Active = "glm"

@@ -140,6 +140,9 @@ var addCmd = &cobra.Command{
 			}
 			p.MaxPromptTokens = n
 		}
+		if qk, _ := cmd.Flags().GetString("quota"); strings.TrimSpace(qk) != "" {
+			p.Quota = &config.QuotaConfig{Kind: qk}
+		}
 		if err := p.Validate(); err != nil {
 			return err
 		}
@@ -351,6 +354,7 @@ func init() {
 	addCmd.Flags().Float64("price-out", 0, "每百万输出 token 单价")
 	addCmd.Flags().String("context", "", "默认模型上下文窗口（如 128k、1.5m）")
 	addCmd.Flags().String("max-prompt-tokens", "", "COPILOT_PROVIDER_MAX_PROMPT_TOKENS 覆盖值（如 128k；留空按主对话目标上下文自动推导）")
+	addCmd.Flags().String("quota", "", "用量查询类型（glm=GLM Coding Plan；none=禁用；留空按 BaseURL 自动探测）")
 	addCmd.Flags().Int("timeout", 0, "上游超时秒数")
 	switchCmd.Flags().String("model", "", "同时更新该供应商的默认模型")
 	rootCmd.AddCommand(addCmd, listCmd, currentCmd, switchCmd, removeCmd, testCmd)

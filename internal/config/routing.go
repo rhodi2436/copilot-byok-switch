@@ -202,3 +202,20 @@ func (c *Config) ValidateRouting() error {
 	}
 	return nil
 }
+
+// ValidateAutoSwitch 校验自动切换配置（候选引用存在、阈值/间隔范围合理）。
+func (c *Config) ValidateAutoSwitch() error {
+	a := &c.AutoSwitch
+	if a.ThresholdPct < 0 || a.ThresholdPct > 100 {
+		return fmt.Errorf("切换阈值需在 0-100 之间（当前 %.1f）", a.ThresholdPct)
+	}
+	if a.IntervalSec != 0 && a.IntervalSec < MinAutoSwitchIntervalSec {
+		return fmt.Errorf("轮询间隔不能低于 %d 秒（当前 %d）", MinAutoSwitchIntervalSec, a.IntervalSec)
+	}
+	for _, n := range a.Order {
+		if _, i := c.Find(n); i < 0 {
+			return fmt.Errorf("自动切换候选 %q 不是已配置的供应商", n)
+		}
+	}
+	return nil
+}
