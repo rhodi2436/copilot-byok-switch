@@ -159,6 +159,28 @@
   .hbar .cap b{color:var(--tx);font-family:var(--mono);font-weight:600}
   .hbar .track{height:10px;border-radius:6px;background:rgba(255,255,255,.05);overflow:hidden}
   .hbar .fill{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--purple),var(--cyan));box-shadow:0 0 10px var(--glowP)}
+
+  /* ── 限额用量条 / 自动切换 ──────────── */
+  .qrow{display:flex;align-items:center;gap:10px;margin-top:7px;font-size:12px}
+  .qrow .ql{width:46px;color:var(--dim);font-family:var(--mono);flex:none}
+  .qrow .track{flex:1;height:8px;border-radius:5px;background:rgba(255,255,255,.05);overflow:hidden}
+  .qrow .fill{display:block;height:100%;border-radius:5px;transition:width .3s}
+  .qrow .qv{width:150px;text-align:right;font-family:var(--mono);color:var(--dim);flex:none}
+  .qrow .qr{width:78px;text-align:right;color:var(--faint);font-family:var(--mono);font-size:11px;flex:none}
+  .asrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px}
+  .asrow label{display:flex;gap:7px;align-items:center;margin:0;font-size:13px;color:var(--dim);cursor:pointer}
+  .asrow input[type=number]{width:84px}
+  .ordchip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);color:var(--dim);border-radius:8px;padding:4px 6px 4px 12px;font-size:13px;font-family:var(--mono)}
+  .ordchip b{font-weight:600}
+  .ordchip button{background:none;border:0;color:var(--faint);cursor:pointer;padding:0 3px;font-size:11px}
+  .ordchip button:hover{color:var(--cyan)}
+  .evt{font-family:var(--mono);font-size:12px}
+  .evt .row{display:flex;gap:12px;padding:5px 2px;border-bottom:1px dashed rgba(42,42,74,.6);color:var(--dim)}
+  .evt .row:last-child{border-bottom:0}
+  .evt .t{color:var(--faint);flex:none}
+  .evt .k{flex:none;width:52px}
+  .evt .k.sw{color:var(--ok)} .evt .k.bl{color:var(--warn)}
+  .evt .r{color:var(--dim);white-space:normal}
   .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
   .seg button{background:transparent;border:0;color:var(--dim);padding:5px 14px;font-size:12px;cursor:pointer}
   .seg button.on{background:rgba(124,77,255,.25);color:#e6dcff}
@@ -230,6 +252,23 @@
         <div class="chips" id="ovModel"></div>
       </div>
       <div class="g" id="ovStatus">加载中…</div>
+      <div class="g" id="ovAuto">
+        <div class="bar" style="margin:0 0 10px"><h3 style="margin:0">限额自动切换 · AUTO SWITCH</h3>
+          <div style="display:flex;gap:10px;align-items:center">
+            <label style="display:flex;gap:7px;align-items:center;cursor:pointer;margin:0;font-size:13px;color:var(--dim)">
+              <input type="checkbox" id="asEnable" style="accent-color:var(--purple);width:16px;height:16px"> 启用</label>
+            <button class="btn mini" id="asPoke" title="立即执行一轮用量检查">⚡ 立即检查</button>
+          </div>
+        </div>
+        <div class="asrow">
+          <label>阈值 <input type="number" id="asThreshold" class="in num" min="1" max="100" step="0.5"> %<span class="hint">（任一窗口达到即切换）</span></label>
+          <label>轮询 <input type="number" id="asInterval" class="in num" min="30" step="30"> 秒</label>
+        </div>
+        <div class="lab" style="margin-top:14px">候选顺序 ─ 超阈值时按此顺序取第一个未超阈值的供应商（↑↓ 调整）</div>
+        <div class="chips" id="asOrder"></div>
+        <div class="lab" style="margin-top:14px">最近事件</div>
+        <div class="evt" id="asEvents"><span class="hint">暂无</span></div>
+      </div>
       <div class="g">
         <div class="bar" style="margin:0 0 10px"><h3 style="margin:0">最近请求</h3>
           <button class="btn mini" onclick="ui.refreshLogs()">刷新</button></div>
@@ -338,6 +377,12 @@
         <input id="fPriceIn" type="number" step="any" class="in" placeholder="输入单价">
         <input id="fPriceOut" type="number" step="any" class="in" placeholder="输出单价">
       </div>
+      <label>用量查询（订阅套餐限额；cops quota 与自动切换依赖此配置）</label>
+      <select id="fQuota" class="in">
+        <option value="">自动探测（按 BaseURL 域名）</option>
+        <option value="glm">GLM Coding Plan（智谱 / z.ai 订阅）</option>
+        <option value="none">关闭</option>
+      </select>
       <div class="err" id="dlgErr"></div>
     </div>
     <div class="df">
@@ -389,7 +434,8 @@ const ruleZh = r => ({utility:'辅助',virtual:'虚拟',pinned:'钉住',default:
 
 const ui = {
   providers: [], active: '', routing: {}, status: {}, logs: [],
-  tab: 'overview', statMode: 'requests', _rtTimer: null,
+  quota: [], autoswitch: null,
+  tab: 'overview', statMode: 'requests', _rtTimer: null, _asTimer: null,
 
   // ── 基础 ──────────────────────────────
   async init() {
@@ -422,7 +468,7 @@ const ui = {
     this.tab = t;
     $$('#tabs .tab').forEach(a => a.classList.toggle('on', a.dataset.t === t));
     $$('.view').forEach(v => v.classList.toggle('on', v.id === 'v-'+t));
-    if (t === 'overview') this.renderOverview();
+    if (t === 'overview') { this.renderOverview(); this.renderAutoSwitch(); }
     if (t === 'providers') this.renderProviders();
     if (t === 'routing') this.renderRouting();
     if (t === 'stats') this.renderStats();
@@ -455,12 +501,13 @@ const ui = {
   },
 
   async poll() {
-    try { await Promise.all([this.refreshStatus(), this.refreshLogs()]); } catch(e) {}
+    try { await Promise.all([this.refreshStatus(), this.refreshLogs(), this.refreshQuota()]); } catch(e) {}
   },
 
   async refreshAll() {
     await this.refreshProviders();
-    await Promise.all([this.refreshStatus(), this.refreshRouting(), this.refreshStats(), this.refreshLogs()]);
+    await Promise.all([this.refreshStatus(), this.refreshRouting(), this.refreshStats(), this.refreshLogs(),
+      this.refreshQuota(), this.refreshAutoSwitch()]);
   },
 
   async refreshStatus() {
@@ -561,7 +608,7 @@ const ui = {
     this.providers = j.providers || [];
     this.active = j.active || '';
     if (this.tab === 'providers') this.renderProviders();
-    if (this.tab === 'overview') this.renderOverview();
+    if (this.tab === 'overview') { this.renderOverview(); this.renderAutoSwitch(); }
   },
 
   async refreshRouting() {
@@ -585,6 +632,107 @@ const ui = {
       if (this.tab === 'logs') this.renderLogs();
       this.renderFeed();
     } catch(e) { console.error(e); }
+  },
+
+  // ── 限额用量 / 自动切换 ───────────────
+  async refreshQuota(force) {
+    try {
+      const j = await this.api('quota' + (force ? '?refresh=1' : ''));
+      this.quota = j.items || [];
+      if (this.tab === 'providers') this.renderProviders();
+    } catch(e) { console.error(e); }
+  },
+
+  quotaOf(name) { return this.quota.find(q => q.provider === name) || null; },
+
+  // quotaBar 单供应商多窗口用量条（HTML）；q 为 /_cops/api/quota 条目。
+  quotaBar(q) {
+    if (!q) return '';
+    if (q.error) return `<div class="hint" style="margin-top:10px">用量查询失败：${esc(q.error)}</div>`;
+    const u = q.usage;
+    if (!u || !u.windows || !u.windows.length) return `<div class="hint" style="margin-top:10px">无用量数据</div>`;
+    const rows = u.windows.map(w => {
+      const pct = w.limit > 0 ? Math.min(100, w.used / w.limit * 100) : 0;
+      const color = pct >= 95 ? 'var(--err)' : pct >= 70 ? 'var(--warn)' : 'var(--ok)';
+      const glow = pct >= 95 ? 'rgba(248,113,168,.5)' : pct >= 70 ? 'rgba(232,179,57,.4)' : 'rgba(52,211,153,.4)';
+      const pctTx = w.limit > 0 ? pct.toFixed(1)+'%' : '—';
+      const reset = w.resetAt && !w.resetAt.startsWith('0001') ? ' ↺ '+w.resetAt.slice(5,16).replace('T',' ') : '';
+      const labelZh = ({five_hour:'5小时','5h':'5小时',weekly:'周',week:'周',monthly:'月',month:'月',daily:'日',day:'日'}[w.type]) || w.type || '额度';
+      return `<div class="qrow" title="${esc(labelZh)}窗口：已用 ${fmtN(w.used)} / ${w.limit>0?fmtN(w.limit):'额度未知'}${reset}">
+        <span class="ql">${esc(labelZh)}</span>
+        <span class="track"><i class="fill" style="width:${pct}%;background:${color};box-shadow:0 0 8px ${glow}"></i></span>
+        <span class="qv">${fmtN(w.used)} / ${w.limit>0?fmtN(w.limit):'?'} · <b style="color:${color}">${pctTx}</b></span>
+        <span class="qr">${reset ? esc(reset.slice(3)) : ''}</span>
+      </div>`;
+    }).join('');
+    return `<div class="qbar" style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)">${rows}</div>`;
+  },
+
+  async refreshAutoSwitch() {
+    let j;
+    try { j = await this.api('autoswitch'); } catch(e) { console.error(e); return; }
+    this.autoswitch = j;
+    this.renderAutoSwitch();
+  },
+
+  renderAutoSwitch() {
+    const a = this.autoswitch;
+    if (!a || !a.autoSwitch) return;
+    const cfg = a.autoSwitch;
+    const provs = this.providers.map(p => p.name);
+    // 候选顺序：显式 order 优先，其后补上未列出的供应商（保存时截断为显式顺序）
+    const order = (cfg.order && cfg.order.length ? cfg.order.slice() : provs.slice()).filter(n => provs.includes(n));
+    for (const n of provs) if (!order.includes(n)) order.push(n);
+    $('#asEnable').checked = !!cfg.enabled;
+    $('#asThreshold').value = cfg.thresholdPct > 0 ? cfg.thresholdPct : 95;
+    $('#asInterval').value = cfg.intervalSec > 0 ? cfg.intervalSec : 300;
+    $('#ovAuto').style.opacity = cfg.enabled ? '' : '.75';
+    $('#asOrder').innerHTML = order.length
+      ? order.map((n, i) => `<span class="ordchip" data-n="${esc(n)}"><b>${i+1}</b>${esc(n)}
+          <button data-mv="-1" title="上移" ${i===0?'disabled':''}>▲</button>
+          <button data-mv="1" title="下移" ${i===order.length-1?'disabled':''}>▼</button></span>`).join('')
+      : '<span class="hint">先添加供应商</span>';
+    const evs = a.events || [];
+    $('#asEvents').innerHTML = evs.length
+      ? evs.slice(0, 8).map(ev => `<div class="row">
+          <span class="t">${esc((ev.time||'').slice(5,16).replace('T',' '))}</span>
+          <span class="k ${ev.kind==='switch'?'sw':'bl'}">${ev.kind==='switch'?'已切换':'未切换'}</span>
+          <span class="r">${esc(ev.reason)}</span></div>`).join('')
+      : '<span class="hint">暂无</span>';
+  },
+
+  // collectAutoSwitch 从控件收集配置；order 为 undefined 时不改动顺序。
+  collectAutoSwitch(order) {
+    const cfg = this.autoswitch && this.autoswitch.autoSwitch || {};
+    const th = parseFloat($('#asThreshold').value);
+    const iv = parseInt($('#asInterval').value, 10);
+    return {
+      enabled: $('#asEnable').checked,
+      thresholdPct: isFinite(th) && th > 0 ? th : 95,
+      intervalSec: isFinite(iv) && iv >= 30 ? iv : 300,
+      order: order || cfg.order || [],
+    };
+  },
+
+  saveAutoSwitch(order) {
+    clearTimeout(this._asTimer);
+    this._asTimer = setTimeout(async () => {
+      try {
+        const j = await this.api('autoswitch', {method:'PUT', body:JSON.stringify({autoSwitch: this.collectAutoSwitch(order)})});
+        this.autoswitch = Object.assign({}, this.autoswitch, {autoSwitch: j.autoSwitch});
+        this.renderAutoSwitch();
+        this.toast('自动切换配置已保存');
+      } catch(e) { this.toast('保存失败：'+e.message, 'err'); await this.refreshAutoSwitch(); }
+    }, 400);
+  },
+
+  // 立即检查 = PUT 相同配置（服务端保存后立即触发一轮检查）。
+  async pokeAutoSwitch() {
+    try {
+      await this.api('autoswitch', {method:'PUT', body:JSON.stringify({autoSwitch: this.collectAutoSwitch()})});
+      this.toast('已触发一轮用量检查');
+      setTimeout(() => { this.refreshAutoSwitch(); this.refreshQuota(true); }, 1200);
+    } catch(e) { this.toast('触发失败：'+e.message, 'err'); }
   },
 
   renderFeed() {
@@ -623,9 +771,11 @@ const ui = {
           模型 <b>${esc(p.model||'—')}</b>${dctx}${dmo}${dmp} · Key ${esc(p.apiKey||'无')}<br>
           清单 ${(p.models||[]).length} 个${(p.models||[]).length?': '+esc(p.models.join(', ')):''}
         </div>
+        ${this.quotaBar(this.quotaOf(p.name))}
         <div class="acts">
           <button class="btn mini pri" ${p.name===this.active?'disabled style="opacity:.4;cursor:not-allowed"':''} data-act="sw" data-n="${esc(p.name)}">启用</button>
           <button class="btn mini" data-act="ed" data-n="${esc(p.name)}">编辑</button>
+          <button class="btn mini" data-act="qt" data-n="${esc(p.name)}" title="立即刷新该供应商用量">⭮ 用量</button>
           <button class="btn mini dan" data-act="del" data-n="${esc(p.name)}">删除</button>
         </div>`;
       box.appendChild(el);
@@ -656,6 +806,7 @@ const ui = {
     const price = p && p.prices && p.prices[p.model];
     $('#fPriceIn').value = price ? price.inputPerMillionTokens : '';
     $('#fPriceOut').value = price ? price.outputPerMillionTokens : '';
+    $('#fQuota').value = p && p.quota ? (p.quota.kind || '') : '';
     $('#dlgErr').textContent = '';
     this.syncDatalists();
     $('#dlgBg').classList.add('show');
@@ -749,6 +900,7 @@ const ui = {
     }
     if (!isFinite(d.mp)) { $('#dlgErr').textContent = 'PROMPT 上限覆盖需为正数或留空'; return; }
     if (d.mp > 0) p.maxPromptTokens = d.mp;
+    if ($('#fQuota').value) p.quota = {kind: $('#fQuota').value};
     const pin = parseFloat(d.pin), pout = parseFloat(d.pout);
     if (p.model && (pin > 0 || pout > 0)) {
       p.prices = {[p.model]: {inputPerMillionTokens: pin||0, outputPerMillionTokens: pout||0, currency:'CNY'}};
@@ -1021,11 +1173,27 @@ $('#cards').addEventListener('click', e => {
   const n = b.dataset.n;
   if (b.dataset.act === 'sw') ui.switchTo(n);
   else if (b.dataset.act === 'ed') ui.edit(n);
+  else if (b.dataset.act === 'qt') ui.refreshQuota(true).then(() => ui.toast('用量已刷新'));
   else if (b.dataset.act === 'del' && confirm(`删除供应商「${n}」？此操作不可撤销。`)) {
     ui.api('providers?name='+encodeURIComponent(n), {method:'DELETE'})
       .then(() => { ui.toast('已删除 '+n); return ui.refreshAll(); })
       .catch(err => ui.toast('删除失败：'+err.message, 'err'));
   }
+});
+
+// ── 限额自动切换卡片 ──────────────────
+$('#asEnable').addEventListener('change', () => ui.saveAutoSwitch());
+$('#asThreshold').addEventListener('change', () => ui.saveAutoSwitch());
+$('#asInterval').addEventListener('change', () => ui.saveAutoSwitch());
+$('#asPoke').addEventListener('click', () => ui.pokeAutoSwitch());
+$('#asOrder').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-mv]'); if (!btn) return;
+  const chip = e.target.closest('.ordchip'); if (!chip) return;
+  const cur = [...$$('#asOrder .ordchip')].map(c => c.dataset.n);
+  const i = cur.indexOf(chip.dataset.n), j = i + parseInt(btn.dataset.mv, 10);
+  if (i < 0 || j < 0 || j >= cur.length) return;
+  [cur[i], cur[j]] = [cur[j], cur[i]];
+  ui.saveAutoSwitch(cur);
 });
 
 $('#v-routing').addEventListener('change', e => {

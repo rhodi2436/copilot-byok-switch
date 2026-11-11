@@ -1,5 +1,7 @@
 # cops 迭代计划（ROADMAP）
 
+> **v1.2.0（2026-11-11）— 限额用量查询 + 自动切换**：订阅套餐（GLM Coding Plan 优先）多窗口限额用量查询与阈值自动切换。`internal/quota`：多窗口用量模型（5小时/周/月，取占比最高窗口为约束）+ GLM 客户端（控制台内部接口 `GET /api/monitor/usage/quota/limit`，裸 key 认证，国内 `open.bigmodel.cn` / 国际 `api.z.ai` 按域名适配，credit/token 两种套餐形态与 data 信封/顶层两种响应兼容，团队版 org/project 头支持）+ 短 TTL 查询缓存（CLI/Web 读缓存、决策强制刷新）+ `Decide` 阈值决策（active 任一窗口 ≥ 阈值 → 按候选顺序取首个未超阈值者；查询失败/未知状态保守不动作）。守护进程内置 `autoSwitcher` 循环（20s 起步延迟、间隔随配置、配置变更 poke 即查、切换事件环形留痕去重）；`cops quota` / `cops autoswitch [on|off|set]` 命令；`/_cops/api/quota|autoswitch`；Web 管理页供应商卡片用量条 + 总览自动切换卡片（阈值/间隔/候选顺序/事件流）。配置：`providers[].quota{kind,apiKey,baseUrl,organizationId,projectId}`（域名自动探测）+ `autoSwitch{enabled,thresholdPct=95,intervalSec=300,order}`。
+
 > **v1.0.0（2026-10-16）— 1.0 基线**：OpenAI 兼容反向代理 + 四级确定性模型路由（utility 识别 / 虚拟模型表 / 钉住名 / 默认兜底）+ 逐模型上下文窗口与最大输出元数据（`/v1/models` 能力输出、请求钳制）+ Windows 托盘 / macOS 菜单栏常驻（启动注入、退出恢复、附着/嵌入双模式）+ 霓虹 WebUI 管理页 + 用量统计与请求日志 + install/doctor + 双平台 CI、tag 自动发布、版本注入与新版本提示。此后 master 仅收发布合并，日常开发在 dev。
 
 > 已交付：**v0.1.0** 单激活供应商代理、一键热切换、install/doctor、Web 管理页、用量统计与请求日志；

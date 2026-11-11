@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cops/internal/config"
+	"cops/internal/quota"
 	"cops/internal/reqlog"
 	"cops/internal/stats"
 	"cops/internal/update"
@@ -34,6 +35,10 @@ type Server struct {
 	cfgPtr *atomic.Pointer[config.Config]
 	stats  *stats.Tracker
 	log    *reqlog.Logger
+	// quota 用量查询管理器（CLI/查询单元与自动切换引擎共用缓存）。
+	quota *quota.Manager
+	// switcher 限额自动切换引擎。
+	switcher *autoSwitcher
 	// update 已检测到的新版本（nil 表示无更新或未检测）。
 	update atomic.Pointer[update.Release]
 	// OnShutdown 由调用方注入：收到 shutdown 请求时优雅关停守护进程。
@@ -42,7 +47,15 @@ type Server struct {
 
 // New 创建管理服务。
 func New(cfgPtr *atomic.Pointer[config.Config], st *stats.Tracker, lg *reqlog.Logger) *Server {
-	return &Server{cfgPtr: cfgPtr, stats: st, log: lg}
+	s := &Server{cfgPtr: cfgPtr, stats: st, log: lg,
+		quota: quota.NewManager(nil, 60*time.Second)}
+	s.switcher = newAutoSwitcher(s)
+	return s
+}
+
+// StartAutoSwitch 启动限额自动切换后台循环（serve/tray 守护进程调用）。
+func (s *Server) StartAutoSwitch(ctx context.Context) {
+	go s.switcher.Start(ctx)
 }
 
 // LatestRelease 返回已检测到的新版本摘要（nil 表示无更新）。
@@ -64,11 +77,22 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/_cops/api/switch", s.handleSwitch)
 	mux.HandleFunc("/_cops/api/routing", s.handleRouting)
 	mux.HandleFunc("/_cops/api/routing/use", s.handleRoutingUse)
+	mux.HandleFunc("/_cops/api/quota", s.handleQuota)
+	mux.HandleFunc("/_cops/api/autoswitch", s.handleAutoSwitch)
 	mux.HandleFunc("/_cops/api/stats", s.handleStats)
 	mux.HandleFunc("/_cops/api/logs", s.handleLogs)
 	mux.HandleFunc("/_cops/api/shutdown", s.handleShutdown)
 	mux.HandleFunc("/_cops/", s.handleUI)
 	mux.HandleFunc("/_cops", s.handleUI)
+}
+
+// readJSONBody 读取（限 1MB）并解析 JSON 请求体。
+func readJSONBody(r *http.Request, v any) error {
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err := json.Unmarshal(body, v); err != nil {
+		return fmt.Errorf("JSON 解析失败: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
@@ -133,11 +157,29 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if u := s.update.Load(); u != nil {
 		resp["update"] = map[string]string{"version": u.Version, "url": u.URL}
 	}
+	as := map[string]any{
+		"enabled":     cfg.AutoSwitch.Enabled,
+		"thresholdPct": cfg.AutoSwitch.EffectiveThresholdPct(),
+		"intervalSec": cfg.AutoSwitch.EffectiveIntervalSec(),
+		"order":       cfg.AutoSwitch.Order,
+	}
+	if evs := s.switcher.Events(); len(evs) > 0 {
+		as["lastEvent"] = evs[0]
+	}
+	if lc := s.switcher.LastCheck(); lc != nil {
+		as["lastCheckAt"] = lc.At
+	}
+	resp["autoSwitch"] = as
 	writeJSON(w, http.StatusOK, resp)
 }
 
 func sanitize(p config.Provider) config.Provider {
 	p.APIKey = config.MaskKey(p.APIKey)
+	if p.Quota != nil {
+		q := *p.Quota
+		q.APIKey = config.MaskKey(q.APIKey)
+		p.Quota = &q
+	}
 	return p
 }
 
@@ -164,6 +206,9 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 		if old, idx := cfg.Find(p.Name); idx >= 0 {
 			if p.APIKey == "" || strings.HasPrefix(p.APIKey, "***") {
 				p.APIKey = old.APIKey // 前端回传脱敏 Key 时保留原值
+			}
+			if p.Quota != nil && (p.Quota.APIKey == "" || strings.HasPrefix(p.Quota.APIKey, "***")) {
+				p.Quota.APIKey = old.QuotaAPIKey() // 用量查询密钥同理
 			}
 			cfg.Providers[idx] = p
 		} else {

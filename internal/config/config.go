@@ -56,6 +56,26 @@ type Provider struct {
 	// Copilot CLI 会强制发送 temperature:0 / top_p:0.95（copilot-cli#4950），
 	// 部分上游不接受这些字段，可按供应商开启。
 	StripSampling bool `json:"stripSampling,omitempty"`
+	// Quota 用量查询配置（空 = 不查询）。配置后 `cops quota`、Web 管理页
+	// 可展示该供应商各窗口（5h/周/月等）的限额使用比例，自动切换也依赖它。
+	Quota *QuotaConfig `json:"quota,omitempty"`
+}
+
+// QuotaConfig 供应商用量查询配置。订阅制供应商（如 GLM Coding Plan）大多有
+// 5 小时窗口与周/月窗口等多重限额，查询结果为多窗口列表，切换判定取
+// 占比最高的窗口（约束最紧的一个）。
+type QuotaConfig struct {
+	// Kind 查询实现类型："" = 按供应商 BaseURL 自动探测；"none" = 显式关闭；
+	// "glm" = 智谱 GLM Coding Plan（open.bigmodel.cn / z.ai 域名自动适配）。
+	Kind string `json:"kind,omitempty"`
+	// APIKey 查询用密钥覆盖（部分供应商查询端点与对话端点密钥不同）；
+	// 空 = 复用供应商 APIKey。
+	APIKey string `json:"apiKey,omitempty"`
+	// BaseURL 查询端点根地址覆盖；空 = 按供应商 BaseURL 域名推导。
+	BaseURL string `json:"baseUrl,omitempty"`
+	// OrganizationID / ProjectID 团队版（组织）查询所需的标识，个人版留空。
+	OrganizationID string `json:"organizationId,omitempty"`
+	ProjectID      string `json:"projectId,omitempty"`
 }
 
 // RequestLogConfig 请求日志配置。
@@ -74,6 +94,20 @@ type Config struct {
 	Providers    []Provider       `json:"providers"`
 	RequestLog   RequestLogConfig `json:"requestLog"`
 	Routing      RoutingConfig    `json:"routing"`
+	AutoSwitch   AutoSwitchConfig `json:"autoSwitch"`
+}
+
+// AutoSwitchConfig 限额自动切换配置：守护进程周期查询各供应商用量，
+// 当前激活供应商任一窗口用量占比达到阈值时，按候选顺序切到第一个
+// 未超阈值的供应商。
+type AutoSwitchConfig struct {
+	Enabled bool `json:"enabled"`
+	// ThresholdPct 触发阈值（百分比）；<=0 时取 DefaultAutoSwitchThresholdPct。
+	ThresholdPct float64 `json:"thresholdPct,omitempty"`
+	// IntervalSec 用量轮询间隔（秒）；<=0 时取 DefaultAutoSwitchIntervalSec。
+	IntervalSec int `json:"intervalSec,omitempty"`
+	// Order 候选切换顺序（供应商名，越靠前越优先）；缺省 = 配置文件供应商顺序。
+	Order []string `json:"order,omitempty"`
 }
 
 const (
@@ -83,6 +117,13 @@ const (
 	// EnvMaxPromptTokens 注入 Copilot CLI 的 BYOK 上下文上限变量名。
 	// CLI 进程启动时读取一次（运行中会话不热更），驱动其自动压缩阈值（≈95%）。
 	EnvMaxPromptTokens = "COPILOT_PROVIDER_MAX_PROMPT_TOKENS"
+
+	// DefaultAutoSwitchThresholdPct 默认切换阈值：任一窗口用量达到 95%。
+	DefaultAutoSwitchThresholdPct = 95
+	// DefaultAutoSwitchIntervalSec 默认用量轮询间隔（5 分钟）。
+	DefaultAutoSwitchIntervalSec = 300
+	// MinAutoSwitchIntervalSec 轮询间隔下限（避免打爆上游用量端点）。
+	MinAutoSwitchIntervalSec = 30
 )
 
 // Dir 配置目录（%USERPROFILE%\.cops）。
@@ -156,12 +197,68 @@ func (c *Config) fillDefaults() {
 	for i := range c.Providers {
 		c.Providers[i].cleanModelContext()
 		cleanPosIntMap(&c.Providers[i].ModelMaxOutput)
+		if c.Providers[i].Quota != nil {
+			c.Providers[i].Quota.Kind = strings.TrimSpace(c.Providers[i].Quota.Kind)
+			c.Providers[i].Quota.BaseURL = strings.TrimRight(strings.TrimSpace(c.Providers[i].Quota.BaseURL), "/")
+			if *c.Providers[i].Quota == (QuotaConfig{}) {
+				c.Providers[i].Quota = nil // 空配置视为未启用
+			}
+		}
 	}
 	c.Routing.Normalize()
+	c.AutoSwitch.Normalize(c.Providers)
 }
 
-// ScrubProviderReferences 删除供应商后清理路由表中对它的悬空引用，
-// 避免后续 PUT routing 因历史残留校验失败。
+// Normalize 清洗自动切换配置：去空白、剔除指向不存在供应商的候选（幂等）。
+func (a *AutoSwitchConfig) Normalize(providers []Provider) {
+	for i, n := range a.Order {
+		a.Order[i] = strings.TrimSpace(n)
+	}
+	kept := a.Order[:0]
+	for _, n := range a.Order {
+		if n == "" {
+			continue
+		}
+		if providers != nil {
+			found := false
+			for i := range providers {
+				if providers[i].Name == n {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		if len(kept) == 0 || kept[len(kept)-1] != n { // 去重（保持顺序）
+			kept = append(kept, n)
+		}
+	}
+	a.Order = kept
+}
+
+// EffectiveThresholdPct 生效的切换阈值（百分比，1-100）。
+func (a *AutoSwitchConfig) EffectiveThresholdPct() float64 {
+	if a.ThresholdPct > 0 {
+		return a.ThresholdPct
+	}
+	return DefaultAutoSwitchThresholdPct
+}
+
+// EffectiveIntervalSec 生效的轮询间隔（秒，不低于 MinAutoSwitchIntervalSec）。
+func (a *AutoSwitchConfig) EffectiveIntervalSec() int {
+	if a.IntervalSec >= MinAutoSwitchIntervalSec {
+		return a.IntervalSec
+	}
+	if a.IntervalSec > 0 {
+		return MinAutoSwitchIntervalSec
+	}
+	return DefaultAutoSwitchIntervalSec
+}
+
+// ScrubProviderReferences 删除供应商后清理路由表与自动切换候选中对它的
+// 悬空引用，避免后续 PUT routing / autoswitch 因历史残留校验失败。
 func (c *Config) ScrubProviderReferences(name string) {
 	r := &c.Routing
 	for k, t := range r.VirtualModels {
@@ -176,6 +273,12 @@ func (c *Config) ScrubProviderReferences(name string) {
 	}
 	if r.Utility != nil && r.Utility.Provider == name {
 		r.Utility = nil
+	}
+	for i, n := range c.AutoSwitch.Order {
+		if n == name {
+			c.AutoSwitch.Order = append(c.AutoSwitch.Order[:i], c.AutoSwitch.Order[i+1:]...)
+			break
+		}
 	}
 }
 
@@ -266,6 +369,29 @@ func (p *Provider) Validate() error {
 	if p.MaxPromptTokens < 0 {
 		return fmt.Errorf("maxPromptTokens 不能为负数: %d", p.MaxPromptTokens)
 	}
+	if p.Quota != nil {
+		if err := p.Quota.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Validate 校验用量查询配置。
+func (q *QuotaConfig) Validate() error {
+	q.Kind = strings.TrimSpace(q.Kind)
+	q.BaseURL = strings.TrimSpace(strings.TrimRight(q.BaseURL, "/"))
+	switch q.Kind {
+	case "", "none", "glm":
+	default:
+		return fmt.Errorf("用量查询类型 %q 不支持（可选：glm；留空按 BaseURL 自动探测）", q.Kind)
+	}
+	if q.BaseURL != "" {
+		u, err := url.Parse(q.BaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("用量查询 Base URL 不合法（需形如 https://host[:port][/path]）: %s", q.BaseURL)
+		}
+	}
 	return nil
 }
 
@@ -315,6 +441,14 @@ func (p *Provider) TimeoutOrDefault() int {
 		return p.TimeoutSec
 	}
 	return 600
+}
+
+// QuotaAPIKey 用量查询密钥：Quota.APIKey 覆盖优先，缺省复用供应商 APIKey。
+func (p *Provider) QuotaAPIKey() string {
+	if p.Quota != nil && p.Quota.APIKey != "" {
+		return p.Quota.APIKey
+	}
+	return p.APIKey
 }
 
 // MaskKey 脱敏展示 API Key。
