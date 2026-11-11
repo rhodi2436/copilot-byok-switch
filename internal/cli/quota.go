@@ -16,12 +16,12 @@ import (
 )
 
 // quotaRow 渲染一个供应商的多窗口用量。
-func quotaRow(name string, u *quota.Usage, errMsg string) [][]string {
+func quotaRow(name, scope string, u *quota.Usage, errMsg string) [][]string {
 	if errMsg != "" {
-		return [][]string{{name, "查询失败", "", "", "", errMsg}}
+		return [][]string{{name, scope, "查询失败", "", "", "", errMsg}}
 	}
 	if u == nil || len(u.Windows) == 0 {
-		return [][]string{{name, "—", "", "", "", "无用量数据"}}
+		return [][]string{{name, scope, "—", "", "", "", "无用量数据"}}
 	}
 	var rows [][]string
 	for _, w := range u.Windows {
@@ -35,9 +35,28 @@ func quotaRow(name string, u *quota.Usage, errMsg string) [][]string {
 			limit = fmt.Sprintf("%.0f", w.Limit)
 			pct = fmt.Sprintf("%.1f%%", w.Percent())
 		}
-		rows = append(rows, []string{name, w.Label(), used, limit, pct, reset})
+		rows = append(rows, []string{name, scope, w.Label(), used, limit, pct, reset})
 	}
 	return rows
+}
+
+// scopeZh 查询范围中文。
+func scopeZh(scope string) string {
+	if scope == "team" {
+		return "团队"
+	}
+	return "个人"
+}
+
+// warnDuplicates 打印相同用量警告（两个供应商查出完全一致的用量 =
+// 疑似同一套餐或团队查询落回个人范围）。
+func warnDuplicates(dups []string) {
+	if len(dups) == 0 {
+		return
+	}
+	fmt.Printf("\n⚠  %s 查询到与其他供应商完全相同的用量 —— 若它们分属不同套餐（如团队项目与个人），\n"+
+		"   团队供应商需绑定查询范围：cops quota team <名称> --org <组织ID> --project <项目ID>（ID 获取方式见 README）。\n",
+		strings.Join(dups, "、"))
 }
 
 var quotaCmd = &cobra.Command{
@@ -63,10 +82,12 @@ var quotaCmd = &cobra.Command{
 			defer resp.Body.Close()
 			var out struct {
 				Items []struct {
-					Provider string       `json:"provider"`
-					Kind     string       `json:"kind"`
-					Usage    *quota.Usage `json:"usage"`
-					Error    string       `json:"error"`
+					Provider    string       `json:"provider"`
+					Kind        string       `json:"kind"`
+					Scope       string       `json:"scope"`
+					Usage       *quota.Usage `json:"usage"`
+					Error       string       `json:"error"`
+					DuplicateOf string       `json:"duplicateOf"`
 				} `json:"items"`
 				Active string `json:"active"`
 			}
@@ -78,12 +99,16 @@ var quotaCmd = &cobra.Command{
 				return nil
 			}
 			rows := [][]string{}
+			var dups []string
 			for _, it := range out.Items {
 				mark := "  "
 				if it.Provider == out.Active {
 					mark = "●"
 				}
-				for i, r := range quotaRow(it.Provider, it.Usage, it.Error) {
+				if it.DuplicateOf != "" {
+					dups = append(dups, it.Provider+"（与 "+it.DuplicateOf+" 相同）")
+				}
+				for i, r := range quotaRow(it.Provider, scopeZh(it.Scope), it.Usage, it.Error) {
 					if i == 0 {
 						r = append([]string{mark}, r...)
 					} else {
@@ -92,8 +117,9 @@ var quotaCmd = &cobra.Command{
 					rows = append(rows, r)
 				}
 			}
-			printTable([]string{"", "供应商", "窗口", "已用", "额度", "占比", "重置于"}, rows)
+			printTable([]string{"", "供应商", "范围", "窗口", "已用", "额度", "占比", "重置于"}, rows)
 			fmt.Println("\n● = 当前激活；占比取各窗口已用/额度，自动切换取占比最高的窗口判定。")
+			warnDuplicates(dups)
 			return nil
 		}
 
@@ -105,6 +131,11 @@ var quotaCmd = &cobra.Command{
 		m := quota.NewManager(nil, 0)
 		rows := [][]string{}
 		found := false
+		type fetched struct {
+			name string
+			u    *quota.Usage
+		}
+		var results []fetched
 		for i := range cfg.Providers {
 			p := &cfg.Providers[i]
 			if name != "" && p.Name != name {
@@ -114,6 +145,10 @@ var quotaCmd = &cobra.Command{
 				continue
 			}
 			found = true
+			scope := "个人"
+			if p.Quota.IsTeamScope() {
+				scope = "团队"
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			u, qerr := m.Query(ctx, p, true)
 			cancel()
@@ -121,7 +156,7 @@ var quotaCmd = &cobra.Command{
 			if p.Name == cfg.Active {
 				mark = "●"
 			}
-			for i, r := range quotaRow(p.Name, u, errString(qerr)) {
+			for i, r := range quotaRow(p.Name, scope, u, errString(qerr)) {
 				if i == 0 {
 					r = append([]string{mark}, r...)
 				} else {
@@ -129,13 +164,26 @@ var quotaCmd = &cobra.Command{
 				}
 				rows = append(rows, r)
 			}
+			if u != nil {
+				results = append(results, fetched{p.Name, u})
+			}
 		}
 		if !found {
 			fmt.Println("没有支持用量查询的供应商（守护进程未运行，直查上游）。")
 			return nil
 		}
-		printTable([]string{"", "供应商", "窗口", "已用", "额度", "占比", "重置于"}, rows)
+		printTable([]string{"", "供应商", "范围", "窗口", "已用", "额度", "占比", "重置于"}, rows)
 		fmt.Println("\n● = 当前激活；守护进程未运行 —— cops autoswitch 需要守护进程（cops serve / cops tray）。")
+		var dups []string
+		for i, a := range results {
+			for _, b := range results[:i] {
+				if a.u.SameUsageAs(b.u) {
+					dups = append(dups, a.name+"（与 "+b.name+" 相同）")
+					break
+				}
+			}
+		}
+		warnDuplicates(dups)
 		return nil
 	},
 }
@@ -145,6 +193,114 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// ── cops quota team / unbind：绑定/解除团队查询范围 ───────────────
+
+// setQuotaScope 修改供应商用量查询范围：org/project 均非空 = 团队范围，
+// 均空 = 回到个人范围。在线走 providers API（守护进程内存同步），离线改配置。
+func setQuotaScope(name, org, project string) error {
+	apply := func(p *config.Provider) {
+		if p.Quota == nil {
+			p.Quota = &config.QuotaConfig{}
+		}
+		p.Quota.OrganizationID = org
+		p.Quota.ProjectID = project
+		if *p.Quota == (config.QuotaConfig{}) {
+			p.Quota = nil // 清空后无残留
+		}
+	}
+
+	if base, ok := daemonAPI(); ok {
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Get(base + "/_cops/api/providers")
+		if err != nil {
+			return fmt.Errorf("调用守护进程失败: %w", err)
+		}
+		var list struct {
+			Providers []config.Provider `json:"providers"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+			resp.Body.Close()
+			return fmt.Errorf("解析响应失败: %w", err)
+		}
+		resp.Body.Close()
+		var target *config.Provider
+		for i := range list.Providers {
+			if list.Providers[i].Name == name {
+				target = &list.Providers[i]
+			}
+		}
+		if target == nil {
+			return fmt.Errorf("供应商不存在: %s", name)
+		}
+		apply(target)
+		// GET 返回的是脱敏 Key；回传空值让服务端保留原值
+		// （脱敏形如 "4065b1...OYIv"，不匹配 "***" 前缀，原样回传会覆盖真实 Key）。
+		target.APIKey = ""
+		if target.Quota != nil {
+			target.Quota.APIKey = ""
+		}
+		body, _ := json.Marshal(target)
+		presp, err := (&http.Client{Timeout: 5 * time.Second}).Post(base+"/_cops/api/providers", "application/json", bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("调用守护进程失败: %w", err)
+		}
+		defer presp.Body.Close()
+		var out struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(presp.Body).Decode(&out)
+		if presp.StatusCode != http.StatusOK {
+			return fmt.Errorf("保存失败: %s", out.Error)
+		}
+		return nil
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	p, _ := cfg.Find(name)
+	if p == nil {
+		return fmt.Errorf("供应商不存在: %s", name)
+	}
+	apply(p)
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	return cfg.Save()
+}
+
+var quotaTeamCmd = &cobra.Command{
+	Use:   "team <名称> --org <组织ID> --project <项目ID>",
+	Short: "绑定团队（组织/项目）用量查询范围（GLM 团队版 Coding Plan 必需）",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		org, _ := cmd.Flags().GetString("org")
+		project, _ := cmd.Flags().GetString("project")
+		if strings.TrimSpace(org) == "" || strings.TrimSpace(project) == "" {
+			return fmt.Errorf("--org 与 --project 必须同时提供（ID 获取方式见 README「团队版」一节）")
+		}
+		if err := setQuotaScope(args[0], strings.TrimSpace(org), strings.TrimSpace(project)); err != nil {
+			return err
+		}
+		fmt.Printf("✅ %s 已绑定团队查询范围（organization=%s, project=%s），运行 cops quota 验证。\n",
+			args[0], org, project)
+		return nil
+	},
+}
+
+var quotaUnbindCmd = &cobra.Command{
+	Use:   "unbind <名称>",
+	Short: "解除团队查询范围，回到个人范围查询",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := setQuotaScope(args[0], "", ""); err != nil {
+			return err
+		}
+		fmt.Printf("✅ %s 已回到个人范围查询，运行 cops quota 验证。\n", args[0])
+		return nil
+	},
 }
 
 // ── cops autoswitch ──────────────────────────────────────────────
@@ -331,5 +487,8 @@ func init() {
 	autoswitchSetCmd.Flags().Int("interval", 300, "用量轮询间隔（秒，最小 30）")
 	autoswitchSetCmd.Flags().StringSlice("order", nil, "候选供应商优先顺序（逗号分隔，如 glm2,glm,deepseek）")
 	autoswitchCmd.AddCommand(autoswitchOnCmd, autoswitchOffCmd, autoswitchSetCmd)
+	quotaTeamCmd.Flags().String("org", "", "团队组织 ID（bigmodel-organization）")
+	quotaTeamCmd.Flags().String("project", "", "团队项目 ID（bigmodel-project）")
+	quotaCmd.AddCommand(quotaTeamCmd, quotaUnbindCmd)
 	rootCmd.AddCommand(quotaCmd, autoswitchCmd)
 }

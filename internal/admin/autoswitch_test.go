@@ -108,6 +108,52 @@ func TestQuotaEndpoint(t *testing.T) {
 	}
 }
 
+// TestQuotaEndpointDuplicateAndScope 相同用量检测（duplicateOf）与团队范围标记：
+// 两个供应商用同一账号 Key 查询（团队供应商漏配 org/project 的典型错误），
+// 后者应标记 duplicateOf；正确配置团队标识的供应商 scope=team。
+func TestQuotaEndpointDuplicateAndScope(t *testing.T) {
+	up, _ := fakeQuotaUpstream(map[string]float64{"k1": 88})
+	defer up.Close()
+	team := glmProviderWithFake("glm-team", "k1", up.URL)
+	team.Quota.OrganizationID, team.Quota.ProjectID = "org1", "proj1"
+	s, _ := newTestAdmin(t,
+		glmProviderWithFake("glm-mine", "k1", up.URL), // 个人 key
+		team, // 团队供应商但漏配 → 与 glm-mine 完全相同
+	)
+	s.cfgPtr.Load().Providers[1].Quota.OrganizationID = "" // 模拟漏配
+	s.cfgPtr.Load().Providers[1].Quota.ProjectID = ""
+
+	mux := http.NewServeMux()
+	s.Register(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/_cops/api/quota")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Items []struct {
+			Provider    string `json:"provider"`
+			Scope       string `json:"scope"`
+			DuplicateOf string `json:"duplicateOf"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(out.Items))
+	}
+	if out.Items[0].Provider != "glm-mine" || out.Items[0].Scope != "personal" || out.Items[0].DuplicateOf != "" {
+		t.Errorf("glm-mine 条目错误: %+v", out.Items[0])
+	}
+	if out.Items[1].Provider != "glm-team" || out.Items[1].DuplicateOf != "glm-mine" {
+		t.Errorf("glm-team 应标记 duplicateOf=glm-mine: %+v", out.Items[1])
+	}
+}
+
 func TestAutoSwitchEndpointCRUD(t *testing.T) {
 	s, _ := newTestAdmin(t, config.Provider{Name: "a", BaseURL: "https://a.example.com"})
 	mux := http.NewServeMux()
@@ -339,5 +385,73 @@ func TestProvidersSanitizeQuotaKey(t *testing.T) {
 	}
 	if got.Model != "glm-4.7" {
 		t.Fatalf("model 更新失败: %s", got.Model)
+	}
+
+	// CLI 语义：GET 回读的脱敏 key（形如 "sk-c...-key"）原样回传 → 同样保留原值。
+	// 注意 Find 返回配置内部指针，必须复制值再改，避免污染共享状态。
+	p3 := *got
+	q3 := *got.Quota
+	p3.Quota = &q3
+	p3.APIKey = config.MaskKey(got.APIKey)
+	p3.Quota.APIKey = config.MaskKey(got.Quota.APIKey)
+	body3, _ := json.Marshal(p3)
+	resp4, err := http.Post(ts.URL+"/_cops/api/providers", "application/json", strings.NewReader(string(body3)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp4.Body.Close()
+
+	cfg = s.cfgPtr.Load()
+	got, _ = cfg.Find("glm")
+	if got.APIKey != "sk-chat-key" {
+		t.Fatalf("脱敏 apiKey 回传应保留原值: %q", got.APIKey)
+	}
+	if got.Quota == nil || got.Quota.APIKey != "sk-quota-key" {
+		t.Fatalf("脱敏 quota key 回传应保留原值: %+v", got.Quota)
+	}
+}
+
+// TestProvidersQuotaKeyNoFallbackPollution 旧 quota 未配 apiKey 时，更新供应商
+// 不得把主 API Key 回退灌入 quota.apiKey（配置污染）。
+func TestProvidersQuotaKeyNoFallbackPollution(t *testing.T) {
+	s, _ := newTestAdmin(t)
+	s.cfgPtr.Load().Providers = append(s.cfgPtr.Load().Providers, config.Provider{
+		Name: "glm", BaseURL: "https://open.bigmodel.cn/api/coding/paas/v4",
+		APIKey: "sk-chat-key", Quota: &config.QuotaConfig{Kind: "glm"},
+	})
+	mux := http.NewServeMux()
+	s.Register(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	// 模拟 cops quota team：GET（脱敏）→ 绑定 org/project（key 留空）→ POST。
+	resp, err := http.Get(ts.URL + "/_cops/api/providers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list struct {
+		Providers []config.Provider `json:"providers"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&list)
+	resp.Body.Close()
+	p := list.Providers[0]
+	p.Quota.OrganizationID, p.Quota.ProjectID = "org1", "proj1"
+	body, _ := json.Marshal(p)
+	resp2, err := http.Post(ts.URL+"/_cops/api/providers", "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+
+	cfg := s.cfgPtr.Load()
+	got, _ := cfg.Find("glm")
+	if got.Quota == nil || got.Quota.APIKey != "" {
+		t.Fatalf("quota.apiKey 不应被灌入主 Key: %+v", got.Quota)
+	}
+	if got.Quota.OrganizationID != "org1" || got.Quota.ProjectID != "proj1" {
+		t.Fatalf("团队标识未保存: %+v", got.Quota)
+	}
+	if got.APIKey != "sk-chat-key" {
+		t.Fatalf("主 Key 不应被脱敏值覆盖: %q", got.APIKey)
 	}
 }

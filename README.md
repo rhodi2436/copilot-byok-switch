@@ -101,6 +101,28 @@ cops autoswitch                                          # 查看配置与最近
 - 自动切换引擎随守护进程（`cops serve` / `cops tray`）运行，切换走既有热切换通道，**无需重启 Copilot CLI**；
   全部候选超阈值时保持不变并记录事件（不刷屏去重）；Web 管理页总览有用量条与可视化配置。
 
+#### 团队版（组织/项目）查询范围
+
+智谱的用量端点**默认始终查询个人范围**，不理会 API Key 所属的项目——同一个账号下
+"团队套餐 + 个人套餐"两个供应商若都不绑定团队标识，会查出**完全相同的个人用量**
+（cops 会明确警告"与 xx 查到完全相同的用量"，自动切换也会跳过这类同套餐候选）。
+团队供应商需绑定查询范围：
+
+```powershell
+cops quota team glm-work --org <组织ID> --project <项目ID>
+cops quota unbind glm-work        # 解除，回到个人范围
+```
+
+ID 获取方式（智谱未提供公开查询 API，需从控制台取一次）：
+
+1. 浏览器登录 bigmodel.cn，打开团队用量页 `bigmodel.cn/coding-plan/team/usage-stats`；
+2. F12 → Network，刷新页面，找 `api/monitor/usage/quota/limit` 请求；
+3. 复制请求头 `Bigmodel-Organization`（组织 ID）与 `Bigmodel-Project`（项目 ID）的值
+   （也可在页面 localStorage 中找这两个字段；两个 ID 必须成对，缺一个查询会落回个人范围）。
+
+也可在 Web 管理页供应商弹窗「团队查询范围」填写；`cops quota` 表格的"范围"列显示
+个人/团队，绑定后用量应与个人套餐不同。
+
 ## 托盘模式（推荐常驻方式）
 
 `cops tray` = 托盘 UI + 代理守护进程，单进程。**裸 `cops`（无参数）、Windows 双击 `cops.exe`、macOS 双击 `Cops.app` 均启动托盘模式**（Windows 双击检测到控制台仅本进程时自动重启为无控制台的分离进程，黑窗一闪即关、不留残留；在终端中运行则保持原行为，`cops --console` 可保留控制台调试）：
@@ -157,7 +179,9 @@ mv cops "$HOME/.local/bin/cops"
 | `cops remove <名称>` | 删除供应商 |
 | `cops test [名称]` | 上游连通性测试 |
 | `cops stats [--days N]` | 用量费用统计 |
-| `cops quota [名称]` | 限额用量查询（多窗口占比与重置时间；守护进程在线走共享缓存，`--refresh` 语义见 Web 按钮） |
+| `cops quota [名称]` | 限额用量查询（多窗口占比、重置时间与查询范围；相同用量自动告警） |
+| `cops quota team <名称> --org <ID> --project <ID>` | 绑定团队（组织/项目）查询范围（GLM 团队版必需） |
+| `cops quota unbind <名称>` | 解除团队范围，回到个人范围查询 |
 | `cops autoswitch` | 查看限额自动切换配置、最近检查与切换事件 |
 | `cops autoswitch on/off` | 启用 / 停用限额自动切换 |
 | `cops autoswitch set --threshold 95 --interval 300 --order a,b` | 修改阈值（百分比）/ 轮询间隔（秒）/ 候选顺序 |
@@ -277,7 +301,10 @@ cops 因此在代理侧做**确定性多模型路由**，按请求体 `model` �
 `cops model add cops-pro --provider glm --model glm-4.7`、`cops model add cops-flash --provider glm --model glm-4-flash` 后 `cops model use cops-pro`。CLI 内部辅助调用（摘要/标题等）可在 Web 管理页或配置里加 utility 路由到 flash。托盘「模型」菜单随时一键切换。
 
 **Q: 限额用量查询报错 / 没有数据？**
-用量查询使用套餐侧端点，需满足：① 该供应商是订阅套餐（GLM 需为 Coding Plan 套餐 key，按量付费 key 会报"不存在 coding plan"）；② `quota.kind` 已启用（bigmodel.cn / z.ai 域名自动启用，其他域名需 `cops add --quota glm` 或 Web 弹窗选择）；③ 团队版需在配置文件补齐 `quota.organizationId` / `quota.projectId`。自动切换不依赖用量查询的供应商仍可作为候选（视为用量未知）。
+用量查询使用套餐侧端点，需满足：① 该供应商是订阅套餐（GLM 需为 Coding Plan 套餐 key，按量付费 key 会报"不存在 coding plan"）；② `quota.kind` 已启用（bigmodel.cn / z.ai 域名自动启用，其他域名需 `cops add --quota glm` 或 Web 弹窗选择）；③ 团队版需补齐 `quota.organizationId` / `quota.projectId`（`cops quota team` 绑定，见上节）。自动切换不依赖用量查询的供应商仍可作为候选（视为用量未知）。
+
+**Q: 两个供应商查出的用量完全一样？**
+智谱用量端点默认查询**个人范围**、不理会 Key 的项目归属。团队套餐供应商必须绑定团队查询范围（`cops quota team <名称> --org --project`），否则查到的是个人套餐的用量。cops 检测到完全相同的用量会在 `cops quota` 与 Web 管理页给出警告，自动切换也会跳过这类"同套餐"候选。
 
 **Q: 安全性？**
 代理仅监听 `127.0.0.1`，管理页无鉴权（本机场景）。API Key 明文存于 `~/.cops/config.json`，请勿把该目录加入同步/备份到不受信位置。若改 `listen` 为 `0.0.0.0` 需自行承担风险。

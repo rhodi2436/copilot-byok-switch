@@ -158,10 +158,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		resp["update"] = map[string]string{"version": u.Version, "url": u.URL}
 	}
 	as := map[string]any{
-		"enabled":     cfg.AutoSwitch.Enabled,
+		"enabled":      cfg.AutoSwitch.Enabled,
 		"thresholdPct": cfg.AutoSwitch.EffectiveThresholdPct(),
-		"intervalSec": cfg.AutoSwitch.EffectiveIntervalSec(),
-		"order":       cfg.AutoSwitch.Order,
+		"intervalSec":  cfg.AutoSwitch.EffectiveIntervalSec(),
+		"order":        cfg.AutoSwitch.Order,
 	}
 	if evs := s.switcher.Events(); len(evs) > 0 {
 		as["lastEvent"] = evs[0]
@@ -204,11 +204,19 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if old, idx := cfg.Find(p.Name); idx >= 0 {
-			if p.APIKey == "" || strings.HasPrefix(p.APIKey, "***") {
-				p.APIKey = old.APIKey // 前端回传脱敏 Key 时保留原值
+			// 前端/CLI 回传脱敏 Key（空、"***" 前缀或恰为旧 Key 的脱敏形式）时保留原值。
+			if p.APIKey == "" || strings.HasPrefix(p.APIKey, "***") || p.APIKey == config.MaskKey(old.APIKey) {
+				p.APIKey = old.APIKey
 			}
-			if p.Quota != nil && (p.Quota.APIKey == "" || strings.HasPrefix(p.Quota.APIKey, "***")) {
-				p.Quota.APIKey = old.QuotaAPIKey() // 用量查询密钥同理
+			if p.Quota != nil && (p.Quota.APIKey == "" || strings.HasPrefix(p.Quota.APIKey, "***") ||
+				(old.Quota != nil && p.Quota.APIKey == config.MaskKey(old.Quota.APIKey))) {
+				// 用量查询密钥只从旧 quota 配置保留，不回退主 Key
+				// （运行期 QuotaAPIKey() 已有回退逻辑，落盘回退会污染配置）。
+				if old.Quota != nil {
+					p.Quota.APIKey = old.Quota.APIKey
+				} else {
+					p.Quota.APIKey = ""
+				}
 			}
 			cfg.Providers[idx] = p
 		} else {

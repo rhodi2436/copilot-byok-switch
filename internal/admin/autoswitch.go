@@ -28,18 +28,18 @@ type SwitchEvent struct {
 
 // ProviderCheck 单供应商的最近一次检查结果（Web/CLI 展示用）。
 type ProviderCheck struct {
-	Provider string        `json:"provider"`
-	Kind     string        `json:"kind,omitempty"` // 用量查询类型；空 = 未配置
-	Usage    *quota.Usage  `json:"usage,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	Provider string       `json:"provider"`
+	Kind     string       `json:"kind,omitempty"` // 用量查询类型；空 = 未配置
+	Usage    *quota.Usage `json:"usage,omitempty"`
+	Error    string       `json:"error,omitempty"`
 }
 
 // CheckState 最近一轮检查的整体状态。
 type CheckState struct {
-	At           time.Time        `json:"at"`
-	Active       string           `json:"active"`
-	ThresholdPct float64          `json:"thresholdPct"`
-	Checks       []ProviderCheck  `json:"checks"`
+	At           time.Time       `json:"at"`
+	Active       string          `json:"active"`
+	ThresholdPct float64         `json:"thresholdPct"`
+	Checks       []ProviderCheck `json:"checks"`
 }
 
 // autoSwitcher 引擎主体。所有方法并发安全（事件环与检查状态各持锁）。
@@ -50,7 +50,7 @@ type autoSwitcher struct {
 	evMu   sync.Mutex
 	events []SwitchEvent
 
-	ckMu     sync.Mutex
+	ckMu      sync.Mutex
 	lastCheck *CheckState
 }
 
@@ -204,6 +204,8 @@ func (a *autoSwitcher) recordCheck(st *CheckState) {
 
 // handleQuota GET /_cops/api/quota[?name=glm&refresh=1]：查询供应商用量
 // （多窗口）。不指定 name 时返回全部支持查询的供应商。
+// scope = personal/team；duplicateOf 指向查询到完全相同用量的另一供应商
+// （典型：团队供应商漏配 organizationId/projectId，查询落回个人范围）。
 func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -214,10 +216,12 @@ func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 
 	type item struct {
-		Provider string       `json:"provider"`
-		Kind     string       `json:"kind"`
-		Usage    *quota.Usage `json:"usage,omitempty"`
-		Error    string       `json:"error,omitempty"`
+		Provider    string       `json:"provider"`
+		Kind        string       `json:"kind"`
+		Scope       string       `json:"scope"`
+		Usage       *quota.Usage `json:"usage,omitempty"`
+		Error       string       `json:"error,omitempty"`
+		DuplicateOf string       `json:"duplicateOf,omitempty"`
 	}
 	items := []item{}
 	for i := range cfg.Providers {
@@ -232,7 +236,11 @@ func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		u, err := s.quota.Query(ctx, p, refresh)
 		cancel()
-		it := item{Provider: p.Name, Kind: kind}
+		scope := "personal"
+		if p.Quota.IsTeamScope() {
+			scope = "team"
+		}
+		it := item{Provider: p.Name, Kind: kind, Scope: scope}
 		if u != nil {
 			it.Usage = u
 		}
@@ -240,6 +248,18 @@ func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
 			it.Error = err.Error()
 		}
 		items = append(items, it)
+	}
+	// 相同用量检测：与前面任一供应商完全一致 → duplicateOf 指向它。
+	for i := range items {
+		if items[i].Usage == nil {
+			continue
+		}
+		for j := 0; j < i; j++ {
+			if items[j].Usage != nil && items[i].Usage.SameUsageAs(items[j].Usage) {
+				items[i].DuplicateOf = items[j].Provider
+				break
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "active": cfg.Active})
 }

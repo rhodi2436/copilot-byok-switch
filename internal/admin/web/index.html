@@ -383,6 +383,11 @@
         <option value="glm">GLM Coding Plan（智谱 / z.ai 订阅）</option>
         <option value="none">关闭</option>
       </select>
+      <label>团队查询范围（GLM 团队版必填；个人版留空 —— ID 获取方式见 README「团队版」）</label>
+      <div class="frow">
+        <input id="fQuotaOrg" class="in mono" placeholder="组织 ID（bigmodel-organization）">
+        <input id="fQuotaProject" class="in mono" placeholder="项目 ID（bigmodel-project）">
+      </div>
       <div class="err" id="dlgErr"></div>
     </div>
     <div class="df">
@@ -648,9 +653,13 @@ const ui = {
   // quotaBar 单供应商多窗口用量条（HTML）；q 为 /_cops/api/quota 条目。
   quotaBar(q) {
     if (!q) return '';
-    if (q.error) return `<div class="hint" style="margin-top:10px">用量查询失败：${esc(q.error)}</div>`;
+    const scopeTag = q.scope === 'team' ? ' <span style="color:var(--cyan2)">[团队]</span>' : '';
+    const dupWarn = q.duplicateOf
+      ? `<div class="warn" style="margin-top:8px;font-size:12px">⚠ 与 ${esc(q.duplicateOf)} 查到完全相同的用量 —— 若分属不同套餐，请在此供应商绑定团队查询范围（编辑 → 团队查询范围）</div>`
+      : '';
+    if (q.error) return `<div class="hint" style="margin-top:10px">用量查询失败：${esc(q.error)}</div>${dupWarn}`;
     const u = q.usage;
-    if (!u || !u.windows || !u.windows.length) return `<div class="hint" style="margin-top:10px">无用量数据</div>`;
+    if (!u || !u.windows || !u.windows.length) return `<div class="hint" style="margin-top:10px">无用量数据${scopeTag}</div>${dupWarn}`;
     const rows = u.windows.map(w => {
       const pct = w.limit > 0 ? Math.min(100, w.used / w.limit * 100) : 0;
       const color = pct >= 95 ? 'var(--err)' : pct >= 70 ? 'var(--warn)' : 'var(--ok)';
@@ -665,7 +674,7 @@ const ui = {
         <span class="qr">${reset ? esc(reset.slice(3)) : ''}</span>
       </div>`;
     }).join('');
-    return `<div class="qbar" style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)">${rows}</div>`;
+    return `<div class="qbar" style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)">${scopeTag}${rows}${dupWarn}</div>`;
   },
 
   async refreshAutoSwitch() {
@@ -807,6 +816,8 @@ const ui = {
     $('#fPriceIn').value = price ? price.inputPerMillionTokens : '';
     $('#fPriceOut').value = price ? price.outputPerMillionTokens : '';
     $('#fQuota').value = p && p.quota ? (p.quota.kind || '') : '';
+    $('#fQuotaOrg').value = p && p.quota ? (p.quota.organizationId || '') : '';
+    $('#fQuotaProject').value = p && p.quota ? (p.quota.projectId || '') : '';
     $('#dlgErr').textContent = '';
     this.syncDatalists();
     $('#dlgBg').classList.add('show');
@@ -900,7 +911,12 @@ const ui = {
     }
     if (!isFinite(d.mp)) { $('#dlgErr').textContent = 'PROMPT 上限覆盖需为正数或留空'; return; }
     if (d.mp > 0) p.maxPromptTokens = d.mp;
-    if ($('#fQuota').value) p.quota = {kind: $('#fQuota').value};
+    const qOrg = $('#fQuotaOrg').value.trim(), qProj = $('#fQuotaProject').value.trim();
+    if ((qOrg || qProj) && !(qOrg && qProj)) { $('#dlgErr').textContent = '团队查询范围需同时填写组织 ID 与项目 ID'; return; }
+    if ($('#fQuota').value || qOrg) {
+      p.quota = Object.assign($('#fQuota').value ? {kind: $('#fQuota').value} : {},
+        qOrg && qProj ? {organizationId: qOrg, projectId: qProj} : {});
+    }
     const pin = parseFloat(d.pin), pout = parseFloat(d.pout);
     if (p.model && (pin > 0 || pout > 0)) {
       p.prices = {[p.model]: {inputPerMillionTokens: pin||0, outputPerMillionTokens: pout||0, currency:'CNY'}};

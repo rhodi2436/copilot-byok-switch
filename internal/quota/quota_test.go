@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,10 +154,64 @@ func TestDecide(t *testing.T) {
 
 	// 候选查询失败：跳过（状态不明）。
 	snaps["deepseek"] = snap(0, 0, 0, 0, errors.New("超时"))
-	snaps["glm"] = snap(96, 100, 0, 0, nil)
+	snaps["glm2"] = snap(96, 100, 0, 0, nil)
 	to, _, ok = Decide("glm", []string{"deepseek"}, snaps, 95)
 	if ok {
 		t.Fatalf("候选查询失败不可作为目标：got %q", to)
+	}
+}
+
+// snapAt 构造带固定重置时间的快照（SameUsageAs 按重置时刻比对）。
+func snapAt(used, limit float64, resetMs int64) *Snapshot {
+	return &Snapshot{Usage: &Usage{Windows: []Window{
+		{Type: "five_hour", Used: used, Limit: limit, ResetAt: time.UnixMilli(resetMs)},
+	}}}
+}
+
+func TestSameUsageAs(t *testing.T) {
+	a := snapAt(96, 100, 1792674331981).Usage
+	b := snapAt(96, 100, 1792674331981).Usage
+	if !a.SameUsageAs(b) {
+		t.Error("数值与重置时刻完全一致应判定为同一用量")
+	}
+	// 重置时刻不同（独立套餐的 5h 窗口起点几乎不可能相同）。
+	c := snapAt(96, 100, 1792674399999).Usage
+	if a.SameUsageAs(c) {
+		t.Error("重置时刻不同不应判定为同一用量")
+	}
+	// 用量数值不同。
+	d := snapAt(50, 100, 1792674331981).Usage
+	if a.SameUsageAs(d) {
+		t.Error("数值不同不应判定为同一用量")
+	}
+	if a.SameUsageAs(&Usage{}) || (&Usage{}).SameUsageAs(a) {
+		t.Error("空窗口不应判定为同一用量")
+	}
+	if a.SameUsageAs(nil) {
+		t.Error("nil 不应判定为同一用量")
+	}
+}
+
+func TestDecideSkipsSamePlan(t *testing.T) {
+	// active 与候选查询到完全相同用量（团队供应商漏配 org/project、
+	// 查询落回个人范围的典型场景）：候选应被跳过，原因应给出配置提示。
+	snaps := map[string]*Snapshot{
+		"glm-work": snapAt(96, 100, 1792674331981),
+		"glm-mine": snapAt(96, 100, 1792674331981), // 同一个人套餐
+	}
+	to, reason, ok := Decide("glm-work", []string{"glm-mine"}, snaps, 95)
+	if ok || to != "" {
+		t.Fatalf("同套餐候选应被跳过：got %q %v", to, ok)
+	}
+	if !strings.Contains(reason, "完全相同的用量") || !strings.Contains(reason, "organizationId") {
+		t.Errorf("原因应提示同套餐与配置方向：%q", reason)
+	}
+
+	// 同套餐候选之外还有正常候选时，应跳过同套餐、切到正常候选。
+	snaps["glm-team"] = snapAt(10, 100, 1792674399999)
+	to, reason, ok = Decide("glm-work", []string{"glm-mine", "glm-team"}, snaps, 95)
+	if !ok || to != "glm-team" {
+		t.Fatalf("应跳过同套餐切到 glm-team：got %q %v %q", to, ok, reason)
 	}
 }
 

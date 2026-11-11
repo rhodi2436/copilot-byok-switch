@@ -380,11 +380,16 @@ func (p *Provider) Validate() error {
 // Validate 校验用量查询配置。
 func (q *QuotaConfig) Validate() error {
 	q.Kind = strings.TrimSpace(q.Kind)
+	q.OrganizationID = strings.TrimSpace(q.OrganizationID)
+	q.ProjectID = strings.TrimSpace(q.ProjectID)
 	q.BaseURL = strings.TrimSpace(strings.TrimRight(q.BaseURL, "/"))
 	switch q.Kind {
 	case "", "none", "glm":
 	default:
 		return fmt.Errorf("用量查询类型 %q 不支持（可选：glm；留空按 BaseURL 自动探测）", q.Kind)
+	}
+	if (q.OrganizationID == "") != (q.ProjectID == "") {
+		return fmt.Errorf("团队版查询需同时配置 organizationId 与 projectId（当前只配置其一，查询会落回个人范围）")
 	}
 	if q.BaseURL != "" {
 		u, err := url.Parse(q.BaseURL)
@@ -393,6 +398,11 @@ func (q *QuotaConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+// IsTeamScope 是否按团队（组织/项目）范围查询。
+func (q *QuotaConfig) IsTeamScope() bool {
+	return q != nil && q.OrganizationID != "" && q.ProjectID != ""
 }
 
 // cleanModelContext 清洗模型上下文表：trim 键、去除空键与非正值条目（幂等）。

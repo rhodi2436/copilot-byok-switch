@@ -86,6 +86,27 @@ func (u *Usage) BindingPercent() float64 {
 	return w.Percent()
 }
 
+// SameUsageAs 判断两份用量是否指向同一套餐/查询范围：全部窗口的类型、
+// 数值与重置时刻完全一致（重置时刻为毫秒精度，独立套餐几乎不可能相同）。
+// 用于识别"团队供应商漏配 organizationId/projectId、查询落回个人范围"
+// 这类静默错误（两个供应商查出完全相同的用量）。
+func (u *Usage) SameUsageAs(other *Usage) bool {
+	if u == nil || other == nil || len(u.Windows) == 0 || len(u.Windows) != len(other.Windows) {
+		return false
+	}
+	match := map[string]Window{}
+	for _, w := range u.Windows {
+		match[w.Type+"\x00"+w.ResetAt.Format(time.RFC3339Nano)] = w
+	}
+	for _, w := range other.Windows {
+		m, ok := match[w.Type+"\x00"+w.ResetAt.Format(time.RFC3339Nano)]
+		if !ok || m.Used != w.Used || m.Limit != w.Limit {
+			return false
+		}
+	}
+	return true
+}
+
 // FormatWindows 人类可读的多窗口摘要（如 "5小时 96.2% · 月 41.0%"），供 CLI/托盘。
 func (u *Usage) FormatWindows() string {
 	if u == nil || len(u.Windows) == 0 {
@@ -237,7 +258,9 @@ func (s *Snapshot) Percent() float64 {
 // 返回 (目标供应商, 原因, true)。
 //
 //	候选可用 = 用量未知（未配置查询 / 不支持）或约束窗口占比 < 阈值；
-//	查询失败的候选视为不可用（状态不明不切）。
+//	查询失败的候选视为不可用（状态不明不切）；
+//	用量与当前供应商完全一致的候选视为同一套餐/查询范围，跳过
+//	（典型场景：团队供应商漏配 organizationId/projectId，查询落回个人范围）。
 //	候选按 candidates 顺序取第一个可用者（Order 配置优先，缺省为配置顺序）。
 func Decide(active string, candidates []string, snaps map[string]*Snapshot, thresholdPct float64) (string, string, bool) {
 	sn := snaps[active]
@@ -248,6 +271,7 @@ func Decide(active string, candidates []string, snaps map[string]*Snapshot, thre
 	if !ok || w.Percent() < thresholdPct {
 		return "", "", false // 未达阈值
 	}
+	samePlan := []string{}
 	for _, name := range candidates {
 		if name == active {
 			continue
@@ -257,6 +281,10 @@ func Decide(active string, candidates []string, snaps map[string]*Snapshot, thre
 			continue // 查询失败的候选不切
 		}
 		if c != nil && c.Usage != nil {
+			if c.Usage.SameUsageAs(sn.Usage) {
+				samePlan = append(samePlan, name)
+				continue // 同一套餐/查询范围：切过去没有意义
+			}
 			if cw, has := c.Usage.Binding(); has && cw.Percent() >= thresholdPct {
 				continue // 候选也超阈值
 			}
@@ -268,6 +296,10 @@ func Decide(active string, candidates []string, snaps map[string]*Snapshot, thre
 		reason := fmt.Sprintf("%s %s窗口用量 %.1f%% ≥ %.0f%% 阈值 → 切换到 %s（%s）",
 			active, w.Label(), w.Percent(), thresholdPct, name, candDesc)
 		return name, reason, true
+	}
+	if len(samePlan) > 0 {
+		return "", fmt.Sprintf("%s %s窗口用量 %.1f%% ≥ %.0f%% 阈值，候选 %s 查询到与其完全相同的用量（疑似同一套餐或团队查询落回个人范围，需配置 quota.organizationId/projectId），其余候选超阈值或不可用，保持不变",
+			active, w.Label(), w.Percent(), thresholdPct, strings.Join(samePlan, "、")), false
 	}
 	return "", fmt.Sprintf("%s %s窗口用量 %.1f%% ≥ %.0f%% 阈值，但全部候选均超阈值或不可用，保持不变",
 		active, w.Label(), w.Percent(), thresholdPct), false
